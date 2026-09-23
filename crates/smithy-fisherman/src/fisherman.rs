@@ -833,6 +833,10 @@ pub fn paint(ink: &mut impl Ink, scene: &Scene) {
         end: 1.0,
     };
     draw_hut(ink, &hut, &block, progress, frame, completion, door_open);
+    draw_jetty(ink, w, h, band, frame);
+    if completion < HANDOVER {
+        draw_lumber(ink, w, h, band, completion);
+    }
 
     // While the hut is going up he is building it, whatever the clock
     // says. He does not go to bed halfway through raising a wall.
@@ -1053,9 +1057,101 @@ fn draw_line_and_rod(
     // that lag is most of what makes him read as alive rather than articulated.
     let seconds = frame as f64 / 5.0;
     let sway = (((seconds - 0.4) / LINE_SWAY_SECONDS) * std::f64::consts::TAU).sin() * scale * 0.08;
-    let path = line_path(tip, panel_height - 2.0, sway);
+    // Into the water, not off the bottom of the rail: the line ends a hair
+    // under the surface, where a ring says it went in.
+    let surface = water_surface(panel_height, band_of(scale));
+    let path = line_path(tip, surface + 1.0, sway);
     ink.begin(Part::Line);
     ink.stroke(&path, LINE.with_alpha(0.75), 0.9);
+    let ring = Ellipse::new(Point::new(tip.x + sway, surface), (scale * 0.10, scale * 0.025), 0.0);
+    ink.stroke(&shape_path(&ring), LINE.with_alpha(0.45), 0.7);
+}
+
+/// The rail's band, recovered from his scale.
+fn band_of(scale: f64) -> f64 {
+    scale / FIGURE_SCALE
+}
+
+/// Where the water's surface is: just under the jetty's deck, in the sliver
+/// of rail below the ground line.
+fn water_surface(h: f64, band: f64) -> f64 {
+    ground(h, band) + band * 0.035
+}
+
+pub const WATER: Color = Color::from_rgb8(22, 44, 68);
+const WOOD: Color = Color::from_rgb8(36, 30, 24);
+
+/// The jetty at the perch, and the water beyond it.
+///
+/// He used to fish from bare ground, with his line dropping off the bottom of
+/// the rail. The jetty gives him somewhere to sit, and the water gives the
+/// line somewhere to go — without them "fishing" was a man holding a stick
+/// out over nothing.
+fn draw_jetty(ink: &mut impl Ink, w: f64, h: f64, band: f64, frame: u64) {
+    let (scale, stage_left, stage) = stage_layout(w, band);
+    let perch = stage_left + place_position(Place::Perch) * stage;
+    let deck = ground(h, band);
+    let surface = water_surface(h, band);
+
+    ink.begin(Part::Props);
+    // Water from the jetty's end to past his rod tip, clear of the corner.
+    let (x0, x1) = (
+        perch + scale * 0.45,
+        (perch + scale * (1.0 + ROD_REACH) + band * 0.4).min(w - band * 1.7),
+    );
+    if x1 > x0 {
+        ink.fill(&shape_path(&Rect::new(x0, surface, x1, h)), WATER.with_alpha(0.85));
+        // The surface catches the light in short broken strokes that drift.
+        let drift = (frame as f64 * 0.35) % (scale * 0.5);
+        let mut glints = BezPath::new();
+        let mut x = x0 + drift;
+        while x + scale * 0.2 < x1 {
+            glints.move_to(Point::new(x, surface + 0.4));
+            glints.line_to(Point::new(x + scale * 0.2, surface + 0.4));
+            x += scale * 0.5;
+        }
+        ink.stroke(&glints, LINE.with_alpha(0.5), 0.8);
+    }
+
+    // The deck he sits on, and its piles going down into the water.
+    let (d0, d1) = (perch - scale * 0.35, perch + scale * 0.55);
+    for px in [d0 + scale * 0.1, d1 - scale * 0.1] {
+        let pile = Rect::new(px - scale * 0.035, deck, px + scale * 0.035, h);
+        ink.fill(&shape_path(&pile), WOOD);
+    }
+    let boards = Rect::new(d0, deck - scale * 0.02, d1, deck + scale * 0.06);
+    ink.fill(&shape_path(&boards), WOOD);
+    ink.stroke(&shape_path(&boards), RIM.with_alpha(0.45), (scale * 0.02).max(0.5));
+}
+
+/// The lumber he builds the hut from, where he fetches each plank.
+///
+/// Planks used to appear from nowhere: he walked to an empty spot and came
+/// back carrying one. The pile holds one board per trip still to make and
+/// shrinks as he carries them off.
+fn draw_lumber(ink: &mut impl Ink, w: f64, h: f64, band: f64, completion: f64) {
+    let (scale, stage_left, stage) = stage_layout(w, band);
+    let trips_left = (BUILD_TRIPS - (completion * BUILD_TRIPS).floor()).max(0.0) as usize;
+    if trips_left == 0 {
+        return;
+    }
+    // Just past where he turns back with a load, so he is standing at it.
+    let x = stage_left + build_position(0.0) * stage + scale * 0.55;
+    let floor = ground(h, band);
+    let thick = scale * 0.065;
+    ink.begin(Part::Props);
+    for i in 0..trips_left {
+        // Stacked a little unevenly, the way timber is.
+        let skew = if i % 2 == 0 { 0.0 } else { scale * 0.05 };
+        let board = Rect::new(
+            x + skew,
+            floor - thick * (i as f64 + 1.0),
+            x + skew + scale * 0.90,
+            floor - thick * i as f64,
+        );
+        ink.fill(&shape_path(&board), HUT_WALL);
+        ink.stroke(&shape_path(&board), RIM.with_alpha(0.40), (scale * 0.02).max(0.5));
+    }
 }
 
 /// The cooking fire, burning at its pit.

@@ -107,6 +107,9 @@ fn main() {
         let (x0, x1) = if s.place == Place::Perch && s.doing != Doing::Walking {
             let perch = stage_left + place_position(Place::Perch) * stage;
             (perch - band * 2.5, perch + band * 5.0)
+        } else if s.completion < 1.0 {
+            // The build runs from the hut out to the lumber pile.
+            (stage_left - band * 1.2, stage_left + 0.30 * stage + band * 2.5)
         } else if s.doing == Doing::Walking && s.place == Place::Perch {
             let at = stage_left + 0.3 * stage;
             (at - band * 5.0, at + band * 5.0)
