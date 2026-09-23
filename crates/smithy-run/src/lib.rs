@@ -6,6 +6,7 @@
 
 pub mod check;
 pub mod git;
+pub mod plan;
 pub mod toolchain;
 
 pub use check::{run_check, CheckKind, CheckOutcome, CheckSpec};
