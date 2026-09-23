@@ -66,9 +66,7 @@ pub struct Project {
 impl Project {
     /// Open `root` as a project, detecting its kind.
     pub fn open(root: impl AsRef<Path>) -> Result<Project, String> {
-        let root = root
-            .as_ref()
-            .canonicalize()
+        let root = dunce::canonicalize(root.as_ref())
             .map_err(|e| format!("cannot open {}: {e}", root.as_ref().display()))?;
         if !root.is_dir() {
             return Err(format!("{} is not a directory", root.display()));
@@ -97,9 +95,7 @@ impl Project {
     /// Opening `src/` of a crate should ground the agent in the crate, not in
     /// `src/`. Stops at the filesystem root.
     pub fn discover(start: impl AsRef<Path>) -> Result<Project, String> {
-        let start = start
-            .as_ref()
-            .canonicalize()
+        let start = dunce::canonicalize(start.as_ref())
             .map_err(|e| format!("cannot resolve {}: {e}", start.as_ref().display()))?;
 
         let mut candidate: Option<PathBuf> = None;
@@ -233,7 +229,7 @@ mod tests {
     fn discovery_walks_up_to_the_manifest() {
         let tmp = rust_crate();
         let project = Project::discover(tmp.path().join("src")).unwrap();
-        assert_eq!(project.root, tmp.path().canonicalize().unwrap());
+        assert_eq!(project.root, dunce::canonicalize(tmp.path()).unwrap());
     }
 
     /// An inner crate inside a workspace should ground at the workspace root,
@@ -254,7 +250,7 @@ mod tests {
         .unwrap();
 
         let project = Project::discover(tmp.path().join("inner/src")).unwrap();
-        assert_eq!(project.root, tmp.path().canonicalize().unwrap());
+        assert_eq!(project.root, dunce::canonicalize(tmp.path()).unwrap());
     }
 
     /// A repository boundary is a hard stop: never ground above a `.git`.
@@ -272,7 +268,7 @@ mod tests {
         .unwrap();
 
         let project = Project::discover(repo.join("src")).unwrap();
-        assert_eq!(project.root, repo.canonicalize().unwrap());
+        assert_eq!(project.root, dunce::canonicalize(repo).unwrap());
     }
 
     #[test]

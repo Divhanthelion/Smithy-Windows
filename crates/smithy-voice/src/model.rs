@@ -39,6 +39,7 @@ impl Default for ModelConfig {
 /// own — one place to delete when someone wants their disk back.
 fn default_cache_dir() -> String {
     std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
         .map(|home| format!("{home}/.local/share/smithy/models"))
         .unwrap_or_else(|_| "models".to_string())
 }

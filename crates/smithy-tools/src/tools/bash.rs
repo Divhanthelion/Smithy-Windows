@@ -11,6 +11,7 @@
 //! filesystem tools, a subprocess is not confined by the workspace capability.
 
 use std::io::Read as _;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -38,10 +39,12 @@ impl Tool for Bash {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition::new(
             "bash",
-            "Run a shell command from the workspace root and return combined stdout and stderr. \
-             Default timeout 30 seconds. Output is capped at 30000 characters, truncated in the \
-             middle so both the command's start and its error tail survive. Commands must be \
-             non-interactive.",
+            format!(
+                "Run a shell command from the workspace root and return combined stdout and \
+                 stderr. Default timeout 30 seconds. Output is capped at 30000 characters, \
+                 truncated in the middle so both the command's start and its error tail survive. \
+                 Commands must be non-interactive.{SHELL_NOTE}"
+            ),
             vec![
                 ToolParameter::string("command", "The shell command to run.", true),
                 ToolParameter::integer(
@@ -99,13 +102,117 @@ fn kill_process_group(pid: u32) {
     }
 }
 
+/// Told to the model on Windows, where it would otherwise reach for `dir` and
+/// `C:\` paths that the shell below does not speak.
+#[cfg(windows)]
+const SHELL_NOTE: &str =
+    " The shell is Git Bash: POSIX syntax and tools, with Windows drives at /c/, /d/, ...";
+#[cfg(not(windows))]
+const SHELL_NOTE: &str = "";
+
+/// The POSIX shell commands run under.
+#[cfg(not(windows))]
+fn shell() -> Result<PathBuf, String> {
+    Ok(PathBuf::from("sh"))
+}
+
+/// Windows has no `sh`, so this is Git for Windows' `bash`, found once.
+///
+/// Not `which("bash")`: on a machine with WSL that finds `System32\bash.exe`,
+/// which runs the command inside a Linux VM with a different filesystem view —
+/// the workspace root would not even be the directory it starts in.
+#[cfg(windows)]
+fn shell() -> Result<PathBuf, String> {
+    static SHELL: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    SHELL.get_or_init(find_git_bash).clone().ok_or_else(|| {
+        "no POSIX shell found: install Git for Windows (`winget install Git.Git`), or set \
+         SMITHY_SHELL to a bash.exe"
+            .to_string()
+    })
+}
+
+#[cfg(windows)]
+fn find_git_bash() -> Option<PathBuf> {
+    if let Some(explicit) = std::env::var_os("SMITHY_SHELL") {
+        return Some(PathBuf::from(explicit));
+    }
+    // `git.exe` is on PATH as `<root>\cmd\git.exe`; the shell is `<root>\bin\bash.exe`,
+    // the launcher that puts the MSYS tools on the child's PATH.
+    let beside_git = which::which("git")
+        .ok()
+        .and_then(|git| Some(git.parent()?.parent()?.join("bin").join("bash.exe")));
+    let default_install = std::env::var_os("ProgramFiles")
+        .map(|pf| PathBuf::from(pf).join("Git").join("bin").join("bash.exe"));
+    beside_git
+        .into_iter()
+        .chain(default_install)
+        .find(|candidate| candidate.is_file())
+}
+
+/// A Job Object holding the shell, so the timeout kills its whole tree.
+///
+/// The Windows counterpart of the process group: children inherit the job, and
+/// `TerminateJobObject` ends every member at once. Git Bash's `bin\bash.exe`
+/// is itself a launcher for `usr\bin\bash.exe`, so without this even a plain
+/// `sleep` would outlive a kill aimed at the process we spawned.
+///
+/// The job is assigned just after spawn rather than with the child suspended,
+/// which `std::process` cannot do. The window is the launcher's own startup,
+/// before it has created anything to leak.
+#[cfg(windows)]
+struct Job(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl Job {
+    fn holding(child: &std::process::Child) -> Option<Job> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+        // SAFETY: an anonymous job with default security; the handle is owned by
+        // the returned `Job` and closed exactly once, in `Drop`. The process
+        // handle is borrowed from `child`, which outlives this call.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return None;
+            }
+            if AssignProcessToJobObject(job, child.as_raw_handle()) == 0 {
+                CloseHandle(job);
+                return None;
+            }
+            Some(Job(job))
+        }
+    }
+
+    fn terminate(&self) {
+        // SAFETY: a live job handle we own. Terminating an already-empty job
+        // succeeds and does nothing.
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Job {
+    /// Closing the handle does not kill anything: without
+    /// `KILL_ON_JOB_CLOSE`, a command that finished normally and left a
+    /// background process behind leaves it running, as it would on Unix.
+    fn drop(&mut self) {
+        // SAFETY: the handle came from `CreateJobObjectW` and is closed only here.
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
 /// Spawn `sh -c command`, capture combined output, kill it if it overruns.
 pub fn run_with_timeout(
     command: &str,
     cwd: &std::path::Path,
     timeout: Duration,
 ) -> Result<String, String> {
-    let mut builder = Command::new("sh");
+    let mut builder = Command::new(shell()?);
     builder
         .arg("-c")
         .arg(command)
@@ -133,7 +240,10 @@ pub fn run_with_timeout(
     let mut child = builder
         .spawn()
         .map_err(|e| format!("failed to spawn shell: {e}"))?;
+    #[cfg(unix)]
     let pid = child.id();
+    #[cfg(windows)]
+    let job = Job::holding(&child);
 
     // Drain both pipes on their own threads: a child that fills the stdout pipe
     // blocks forever if the parent is not reading while it waits.
@@ -162,6 +272,10 @@ pub fn run_with_timeout(
                     // The group first: `kill` alone leaves the grandchildren.
                     #[cfg(unix)]
                     kill_process_group(pid);
+                    #[cfg(windows)]
+                    if let Some(job) = &job {
+                        job.terminate();
+                    }
                     let _ = child.kill();
                     let _ = child.wait();
                     timed_out = true;

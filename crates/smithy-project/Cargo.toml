@@ -13,6 +13,7 @@ tree-sitter.workspace = true
 tree-sitter-rust.workspace = true
 streaming-iterator.workspace = true
 ignore.workspace = true
+dunce.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

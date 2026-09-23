@@ -113,7 +113,9 @@ pub fn resolve_mentions(mentions: &[String], project_root: &Path) -> Vec<PathBuf
 }
 
 pub fn user_skills_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".smithy/skills"))
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|h| PathBuf::from(h).join(".smithy/skills"))
 }
 
 fn project_skills_dir(project: &Path) -> PathBuf {

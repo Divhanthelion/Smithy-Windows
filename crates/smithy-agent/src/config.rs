@@ -441,7 +441,9 @@ pub mod secrets {
     }
 
     fn presence_path() -> Option<PathBuf> {
-        let home = std::env::var_os("HOME").map(PathBuf::from)?;
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)?;
         Some(home.join(".local/share/smithy/key_presence.json"))
     }
 

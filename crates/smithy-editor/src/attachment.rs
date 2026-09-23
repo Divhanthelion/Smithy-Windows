@@ -230,7 +230,7 @@ pub fn describe(path: &Path, root: &Path) -> Attachment {
 /// Name a path relative to the project when it lives there.
 pub fn display_path(path: &Path, root: &Path) -> String {
     path.strip_prefix(root)
-        .map(|rel| rel.to_string_lossy().to_string())
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
         .unwrap_or_else(|_| path.to_string_lossy().to_string())
 }
 
@@ -381,7 +381,7 @@ mod tests {
         let elsewhere = tempfile::tempdir().unwrap();
         let path = write(elsewhere.path(), "notes.md", b"hello");
         let a = describe(&path, project.path());
-        assert!(a.display.starts_with('/'), "{}", a.display);
+        assert!(Path::new(&a.display).is_absolute(), "{}", a.display);
     }
 
     #[test]

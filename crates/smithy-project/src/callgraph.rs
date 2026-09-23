@@ -350,7 +350,7 @@ impl CallGraph {
                 .strip_prefix(root)
                 .unwrap_or(path)
                 .to_string_lossy()
-                .to_string();
+                .replace('\\', "/");
             seen.insert(relative.clone());
 
             match self.sources.get(&relative) {

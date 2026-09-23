@@ -74,7 +74,9 @@ struct HarnessToml {
 }
 
 pub fn user_harness_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".smithy/harness"))
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|h| PathBuf::from(h).join(".smithy/harness"))
 }
 
 pub fn project_harness_dir(project: &Path) -> PathBuf {

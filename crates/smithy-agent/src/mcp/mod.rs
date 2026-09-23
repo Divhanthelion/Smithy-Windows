@@ -112,7 +112,7 @@ pub struct McpAttach {
 pub fn load_mcp_files(project: &Path) -> (McpFile, Vec<String>) {
     let mut notices = Vec::new();
     let mut file = McpFile::default();
-    if let Some(home) = std::env::var_os("HOME") {
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
         overlay(
             &mut file,
             &PathBuf::from(home).join(".smithy/mcp.json"),

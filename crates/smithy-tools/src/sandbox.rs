@@ -35,7 +35,7 @@ struct Cap {
 
 impl Cap {
     fn open(root: &Path, label: &str) -> Result<Cap, String> {
-        let canonical = root.canonicalize().map_err(|e| {
+        let canonical = dunce::canonicalize(root).map_err(|e| {
             format!(
                 "{label} {} does not exist or is unreadable: {e}",
                 root.display()
@@ -254,9 +254,8 @@ impl Workspace {
     pub fn absolute_real(&self, path: &str) -> Result<PathBuf, String> {
         let (cap, rel) = self.locate(path)?;
         let candidate = cap.root.join(rel);
-        let real = candidate
-            .canonicalize()
-            .map_err(|e| format!("cannot resolve `{path}`: {e}"))?;
+        let real =
+            dunce::canonicalize(candidate).map_err(|e| format!("cannot resolve `{path}`: {e}"))?;
         if !real.starts_with(&cap.root) {
             return Err(format!("`{path}` resolves outside the workspace"));
         }
@@ -270,9 +269,7 @@ impl Workspace {
 /// the last one left. Not `/tmp` itself — that would be every other process's
 /// temp files.
 pub fn scratch_dir_for(project: &Path) -> PathBuf {
-    let canon = project
-        .canonicalize()
-        .unwrap_or_else(|_| project.to_path_buf());
+    let canon = dunce::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
     std::env::temp_dir()
         .join("smithy")
         .join(scratch_key(&canon))
@@ -511,7 +508,9 @@ fn looks_like_home(token: &str) -> bool {
 }
 
 fn expand_home(path: &str) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
     if home.is_empty() {
         return path.to_string();
     }
@@ -532,7 +531,12 @@ fn expand_home(path: &str) -> String {
 
 fn path_leaves_project(path: &str, root: &Path) -> bool {
     let expanded = expand_home(path);
-    if looks_like_home(path) && std::env::var("HOME").map(|h| h.is_empty()).unwrap_or(true) {
+    if looks_like_home(path)
+        && std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .map(|h| h.is_empty())
+            .unwrap_or(true)
+    {
         // Cannot resolve home; fail closed and ask.
         return true;
     }
@@ -662,7 +666,11 @@ mod tests {
     #[test]
     fn rejects_absolute_path_outside_root() {
         let (_tmp, ws) = workspace();
-        let err = ws.read_to_string("/etc/passwd").unwrap_err();
+        // A sibling directory, not `/etc/passwd`: on Windows that has no drive
+        // prefix, so it is rooted but not absolute and takes the other branch.
+        let outside = tempfile::tempdir().unwrap();
+        let abs = dunce::canonicalize(outside.path()).unwrap().join("passwd");
+        let err = ws.read_to_string(abs.to_str().unwrap()).unwrap_err();
         assert!(err.contains("outside the workspace root"), "got: {err}");
     }
 
@@ -829,7 +837,9 @@ mod tests {
         let root = project();
         assert!(command_leaves_project("cat ~/.bashrc", root));
         assert!(command_leaves_project("cat $HOME/.bashrc", root));
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_default();
         if !home.is_empty() {
             assert!(
                 !command_leaves_project("cat ~/.bashrc", Path::new(&home)),

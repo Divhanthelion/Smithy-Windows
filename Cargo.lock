@@ -6272,6 +6272,7 @@ dependencies = [
  "async-trait",
  "crossbeam-channel",
  "dirs",
+ "dunce",
  "floem",
  "futures-util",
  "ignore",
@@ -6327,6 +6328,7 @@ dependencies = [
 name = "smithy-project"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "ignore",
  "serde",
  "serde_json",
@@ -6346,6 +6348,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "cap-std",
+ "dunce",
  "html2text",
  "ignore",
  "libc",
@@ -6357,6 +6360,8 @@ dependencies = [
  "tempfile",
  "tokio",
  "url",
+ "which",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

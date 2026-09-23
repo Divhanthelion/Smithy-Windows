@@ -116,6 +116,7 @@ mod tests {
 
     /// Encoding without decoding would attach diagnostics to a file called
     /// `terminal%20empire`, which matches no open buffer.
+    #[cfg(not(windows))]
     #[test]
     fn a_path_survives_the_round_trip_through_a_uri() {
         for original in [
@@ -141,6 +142,7 @@ mod tests {
 
     /// A literal `%` in a filename must not be read back as the start of an
     /// escape — this is why `%` is in the unsafe set.
+    #[cfg(not(windows))]
     #[test]
     fn a_literal_percent_in_a_filename_is_not_mistaken_for_an_escape() {
         let path = Path::new("/tmp/100%25 done/report.rs");
@@ -162,11 +164,48 @@ mod tests {
     }
 
     /// The form language servers actually send: empty authority, absolute path.
+    #[cfg(not(windows))]
     #[test]
     fn an_empty_authority_is_the_normal_case() {
         assert_eq!(
             uri_to_path("file:///src/main.rs").as_deref(),
             Some(Path::new("/src/main.rs"))
+        );
+    }
+
+    /// The Windows round trip: backslashes out as `/`, a drive letter behind
+    /// three slashes, and back again. Same hazards as the POSIX list above.
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_path_survives_the_round_trip_through_a_uri() {
+        for original in [
+            r"C:\Users\rj\Desktop\terminal empire\src\main.rs",
+            r"C:\plain\path\lib.rs",
+            r"D:\has\a#hash\and space\x.rs",
+            r"C:\percent %20 already\y.rs",
+            r"C:\unicode\ünïcødé\日本語.rs",
+        ] {
+            let uri = path_to_uri(Path::new(original));
+            assert!(uri.starts_with("file:///"), "{original} → {uri}");
+            assert!(!uri.contains('\\'), "a backslash reached the URI: {uri}");
+            assert!(!uri.contains(' '), "a space reached the URI: {uri}");
+            assert_eq!(
+                uri_to_path(&uri).as_deref(),
+                Some(Path::new(original)),
+                "round trip lost information for {original} (via {uri})"
+            );
+        }
+    }
+
+    /// What servers on Windows send back: the drive colon percent-encoded, and
+    /// often a lowercase drive letter. The colon must decode; the case is left
+    /// for the path comparison, which canonicalizes when strings differ.
+    #[cfg(windows)]
+    #[test]
+    fn an_encoded_drive_colon_decodes() {
+        assert_eq!(
+            uri_to_path("file:///c%3A/src/main.rs").as_deref(),
+            Some(Path::new(r"c:\src\main.rs"))
         );
     }
 }

@@ -89,7 +89,7 @@ pub fn is_same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
     if a == b {
         return true;
     }
-    match (a.canonicalize(), b.canonicalize()) {
+    match (dunce::canonicalize(a), dunce::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     }

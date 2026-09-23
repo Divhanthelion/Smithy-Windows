@@ -233,6 +233,7 @@ impl SessionStore {
     /// this method is the crate-level default for non-UI consumers.
     pub fn default_location() -> Result<SessionStore, String> {
         let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
             .map(PathBuf::from)
             .ok_or("HOME is not set; pass an explicit session store path")?;
         SessionStore::new(home.join(".local/share/smithy/sessions"))

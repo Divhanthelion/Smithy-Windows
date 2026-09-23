@@ -356,7 +356,7 @@ impl SymbolIndex {
                 .strip_prefix(root)
                 .unwrap_or(path)
                 .to_string_lossy()
-                .to_string();
+                .replace('\\', "/");
             let module = module_for(path);
 
             index.files += 1;

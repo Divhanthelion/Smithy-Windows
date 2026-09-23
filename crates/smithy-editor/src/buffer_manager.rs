@@ -74,7 +74,7 @@ impl BufferManager {
     /// Open a file and create a buffer for it
     pub fn open_file(&mut self, path: &Path) -> Result<BufferId, BufferError> {
         // Canonicalize the path for consistent lookup
-        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let canonical_path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
 
         // Check if file is already open
         if let Some(&existing_id) = self.path_to_buffer.get(&canonical_path) {
@@ -92,9 +92,8 @@ impl BufferManager {
 
         // Register the path mapping
         if let Some(buffer_path) = buffer.path() {
-            let canonical = buffer_path
-                .canonicalize()
-                .unwrap_or_else(|_| buffer_path.clone());
+            let canonical =
+                dunce::canonicalize(buffer_path).unwrap_or_else(|_| buffer_path.clone());
             self.path_to_buffer.insert(canonical, id);
         }
 
@@ -152,7 +151,7 @@ impl BufferManager {
 
         let buffer_ref = buffer_rc.borrow();
         if let Some(path) = buffer_ref.path() {
-            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            let canonical = dunce::canonicalize(path).unwrap_or_else(|_| path.clone());
             self.path_to_buffer.remove(&canonical);
         }
         drop(buffer_ref);
@@ -188,7 +187,7 @@ impl BufferManager {
 
     /// Get a buffer ID by file path
     pub fn get_buffer_by_path(&self, path: &Path) -> Option<BufferId> {
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let canonical = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         self.path_to_buffer.get(&canonical).copied()
     }
 }

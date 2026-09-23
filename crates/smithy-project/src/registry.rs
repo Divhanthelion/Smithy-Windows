@@ -38,6 +38,7 @@ impl ProjectRegistry {
     /// `~/.local/share/smithy`.
     pub fn default_location() -> Result<Self, String> {
         let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
             .map(PathBuf::from)
             .ok_or("HOME is not set")?;
         ProjectRegistry::new(home.join(".local/share/smithy"))

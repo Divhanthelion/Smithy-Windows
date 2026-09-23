@@ -218,7 +218,7 @@ impl FileWatcher {
     /// against. Every modification then looks like a creation, because the
     /// existence set is keyed by a spelling the events never use.
     pub fn with_config(root: &Path, config: FileWatcherConfig) -> notify::Result<Self> {
-        let root = &root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let root = &dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
         let (tx, rx) = unbounded();
 
         let watcher = RecommendedWatcher::new(
