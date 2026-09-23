@@ -5,9 +5,14 @@
 //! Checks, then mechanical rules, then Jev, then the model.
 
 pub mod check;
+pub mod decisions;
 pub mod git;
 pub mod plan;
+pub mod report;
+pub mod state;
 pub mod toolchain;
 
 pub use check::{run_check, CheckKind, CheckOutcome, CheckSpec};
+pub use plan::{Plan, Task};
+pub use state::{Ceilings, RunState, TaskStatus, Verdict};
 pub use toolchain::{Counter, TestRun, Toolchain};
