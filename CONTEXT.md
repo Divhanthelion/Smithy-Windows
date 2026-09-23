@@ -46,7 +46,7 @@ Hunk-level approval of `edit` / `write`. The tool call *waits* and hears the rea
 _Avoid_: confirm, pending-as-success, auto-land (that is a mode, not Review)
 
 **YOLO**:
-A mode. Inside the Project, `edit` / `write` skip Review and `bash` that stays down in the tree runs without a prompt. A command that names a path up out of the Project, or over into a sibling, still asks. Off by default. Not a sandbox: the shell is still a subprocess.
+A mode. Inside the Project, `edit` / `write` skip Review and `bash` that stays down in the tree runs without a prompt. A command that names a path up out of the Project, or over into a sibling, still asks. On by default in the terminal (`--reviewed` turns it off). Not a sandbox: the shell is still a subprocess.
 _Avoid_: auto-land as the name; using YOLO as a synonym for Review; claiming bash cannot leave
 
 **Explore**:
@@ -111,6 +111,47 @@ _Avoid_: calling this Explore; loosening Explore's 12/180s/48k caps to make Rese
 **Grill**:
 The `/grill-me` Skill. Interview; facts via read/explore. Not Research, not a Session kind.
 _Avoid_: implementing during the grill; treating Grill as a harness type
+
+### Unattended runs
+
+**Run**:
+One intent worked unattended on its own git branch until every Task's Checks pass or it is blocked. Started by `smithy-agent run`. Owns git for its branch; never pushes.
+_Avoid_: job, pipeline, autopilot; calling a single Turn a run
+
+**Intent**:
+What the user asked a Run to build, verbatim. The Plan serves it; the Guardrail judges it.
+
+**Plan**:
+`.smithy/runs/<run>/plan.toml`: Tasks with Checks. Validated mechanically before anything runs. Not `PLAN.md` (a working note, gitignored here).
+
+**Task**:
+One slice of the Plan, done when its Checks pass. Worked in at most three Attempts.
+
+**Attempt**:
+One fresh Session on one Task, ending in a Checkpoint, a Handoff to the next Attempt, or a block.
+
+**Check**:
+A command the runner runs — build, test, lint — whose exit status and test count decide done. Ground truth: outranks Jev and the model.
+_Avoid_: calling the model's own "tests pass" a Check
+
+**Checkpoint**:
+The commit a Run makes when a Task's Checks pass.
+
+**Guardrail**:
+The Jev question asked of the Intent and of each Task before it starts: is this illegal or clearly harmful? A yes stops the Run and wakes the user. Fails closed.
+
+**Baseline**:
+Which tests passed when the Run started. May not shrink.
+
+**Source**:
+A page `web_fetch` rendered, saved outside the Project by its hash so a quote can be checked later. Cited by short id.
+
+**Note**:
+A research result in `.smithy/research/`, listed in its `index.json`. Its findings carry Source ids and quotes that `cite_check` verifies.
+_Avoid_: Handoff (that is for a later Session), `docs/research/` (ignored in this repo)
+
+**Report**:
+`.smithy/runs/<run>/REPORT.md`, rewritten at every Checkpoint: what got done, what is blocked, every Jev decision.
 
 ### Provenance (do not leak into names)
 
