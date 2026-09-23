@@ -263,6 +263,49 @@ pub mod test_support {
         }
     }
 
+    /// Fails with each queued error in turn, then replays a script.
+    pub struct FlakyProvider {
+        failures: Mutex<std::collections::VecDeque<ProviderError>>,
+        inner: ScriptedProvider,
+    }
+
+    impl FlakyProvider {
+        pub fn new(failures: Vec<ProviderError>, script: Vec<Completion>) -> Self {
+            Self {
+                failures: Mutex::new(failures.into()),
+                inner: ScriptedProvider::new(script),
+            }
+        }
+
+        pub fn call_count(&self) -> usize {
+            self.inner.call_count()
+        }
+    }
+
+    #[async_trait]
+    impl Provider for FlakyProvider {
+        fn name(&self) -> &str {
+            "flaky"
+        }
+        fn model(&self) -> &str {
+            "test-model"
+        }
+        async fn complete(
+            &self,
+            request: CompletionRequest<'_>,
+            on_delta: Option<&(dyn Fn(Delta) + Send + Sync)>,
+        ) -> Result<Completion, ProviderError> {
+            let failure = self.failures.lock().unwrap().pop_front();
+            match failure {
+                Some(error) => {
+                    *self.inner.calls.lock().unwrap() += 1;
+                    Err(error)
+                }
+                None => self.inner.complete(request, on_delta).await,
+            }
+        }
+    }
+
     /// A provider whose `complete` never returns. The turn clock has to cut it
     /// off — a client-level HTTP timeout of an hour would not.
     pub struct HangingProvider {

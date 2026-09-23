@@ -1,10 +1,19 @@
-//! Jev — TypeSafe's "System One" model — as a second opinion on shell commands.
+//! Jev — TypeSafe's "System One" model — as the loop's reflexes.
 //!
 //! Jev returns decisions, not text: a state and typed questions in, a
-//! probability out. Smithy asks it one thing. When YOLO is about to run a
-//! command without asking, because the lexical check found no path leaving the
-//! Project, Jev is asked whether a careful developer would want to see it
-//! first. A yes turns the silent run into the ordinary approval prompt.
+//! probability out, in about half a second. Smithy asks it three things:
+//!
+//! - **Is this command worth a look?** When YOLO is about to run a command
+//!   without asking, because the lexical checks found no path leaving the
+//!   Project and no network, Jev is asked whether a careful developer would
+//!   want to see it first. A yes turns the silent run into the approval prompt.
+//! - **Is the agent going in circles?** After each step, from the fourth on.
+//!   A yes gets a nudge; a second yes in the same turn ends it. See [`Supervisor`].
+//! - **Is it actually done?** Before a turn ends with an answer. A no sends the
+//!   model back to work, once.
+//!
+//! The thresholds are measured, not guessed: `cargo run -p smithy-agent
+//! --example jev` scores known cases for all three and reports the misses.
 //!
 //! The lexical check answers *where* a command reaches, and nothing about what
 //! it does there. `git reset --hard`, `git push --force`, `rm -rf src` and
@@ -13,7 +22,7 @@
 //!
 //! ## It can only add a prompt
 //!
-//! Jev never approves anything. The command it judges was written by a model
+//! For the shell check: Jev never approves anything. The command it judges was written by a model
 //! that reads the repository, and a comment inside that command is text Jev
 //! reads too; an answer that could skip a prompt would make the prompt
 //! negotiable. So the worst a wrong answer costs is one extra click, and an
@@ -21,9 +30,13 @@
 //! from before it existed.
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use serde_json::{json, Value};
+
+use crate::observe::{StepObserver, StepRecord, TurnView, Verdict};
 
 /// Credential-store account for the Vercel AI Gateway key. `AI_GATEWAY_API_KEY`
 /// in the environment is the fallback, as for every other key.
@@ -77,30 +90,241 @@ impl Jev {
 
     /// Probability, 0 to 1, that this command deserves a human look first.
     pub async fn shell_risk(&self, command: &str, root: &Path) -> Result<f64, String> {
+        self.ask_noul(shell_state(command, root), SHELL_QUESTION).await
+    }
+
+    /// Probability that the agent is going in circles.
+    pub async fn loop_risk(&self, request: &str, steps: &[StepRecord]) -> Result<f64, String> {
+        self.ask_noul(loop_state(request, steps), LOOP_QUESTION).await
+    }
+
+    /// Probability that the turn has done what was asked.
+    pub async fn completion(
+        &self,
+        request: &str,
+        steps: &[StepRecord],
+        answer: &str,
+    ) -> Result<f64, String> {
+        self.ask_noul(done_state(request, steps, answer), DONE_QUESTION).await
+    }
+
+    /// One `noul` question, retried once if the gateway had a bad moment.
+    ///
+    /// Once, not with backoff: every caller has somewhere to fall back to, and
+    /// a check that holds a turn for a minute has stopped being cheap.
+    async fn ask_noul(&self, state: String, instructions: &str) -> Result<f64, String> {
         let body = json!({
             "model": MODEL,
-            "state": shell_state(command, root),
-            "questions": {
-                "confirm": { "type": "noul", "instructions": SHELL_QUESTION },
-            },
+            "state": state,
+            "questions": { "q": { "type": "noul", "instructions": instructions } },
         });
+        match self.post(&body).await {
+            Err(Failure::Transient(_)) => {
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                self.post(&body).await
+            }
+            other => other,
+        }
+        .map_err(|(Failure::Transient(e) | Failure::Final(e))| e)
+        .and_then(|text| noul(&text, "q"))
+    }
+
+    async fn post(&self, body: &Value) -> Result<String, Failure> {
         let response = self
             .http
             .post(ENDPOINT)
             .bearer_auth(&self.key)
-            .json(&body)
+            .json(body)
             .send()
             .await
-            .map_err(|e| format!("Jev unreachable: {e}"))?;
+            .map_err(|e| Failure::Transient(format!("Jev unreachable: {e}")))?;
         let status = response.status();
         let text = response
             .text()
             .await
-            .map_err(|e| format!("Jev response unreadable: {e}"))?;
-        if !status.is_success() {
-            return Err(format!("Jev {status}: {}", error_message(&text)));
+            .map_err(|e| Failure::Transient(format!("Jev response unreadable: {e}")))?;
+        if status.is_success() {
+            return Ok(text);
         }
-        noul(&text, "confirm")
+        let message = format!("Jev {status}: {}", error_message(&text));
+        Err(if status.is_server_error() || status.as_u16() == 429 {
+            Failure::Transient(message)
+        } else {
+            Failure::Final(message)
+        })
+    }
+}
+
+enum Failure {
+    Transient(String),
+    Final(String),
+}
+
+// ---------------------------------------------------------------------------
+// Supervision: loops and early stops
+// ---------------------------------------------------------------------------
+
+/// Before this many steps a loop is indistinguishable from getting oriented.
+const LOOP_MIN_STEPS: usize = 4;
+/// How far back the loop check looks. A loop is recent by definition.
+const LOOP_WINDOW: usize = 8;
+/// A nudge on a false alarm costs a paragraph of the model's attention; being
+/// stopped costs the turn. High, because the step ceiling is still behind it.
+/// Measured: loops 0.93–0.98, productive sequences 0.06–0.09.
+const LOOP_THRESHOLD: f64 = 0.85;
+/// Below this the answer is sent back once. Measured with the `jev` example:
+/// finished turns scored 0.81–0.94 and turns that quit partway 0.04–0.28, so
+/// the middle of that gap. 0.2 was the first guess, and let a half-done rename
+/// (0.28) through.
+const DONE_THRESHOLD: f64 = 0.5;
+
+const LOOP_QUESTION: &str = "Is the agent stuck? Yes if it is repeating the same or nearly the \
+same actions, re-reading or re-checking things it already has, or retrying a failing approach \
+without changing it, instead of making progress on the request. No if each action gathers new \
+information or changes something, even when the actions are similar in kind (reading several \
+different files, fixing a series of different errors).";
+
+const DONE_QUESTION: &str = "Has the agent finished what the user asked for? Yes if it did the \
+work, answered the question, or explains a genuine blocker it cannot get past. No if it stopped \
+partway, only described or planned what it would do, or asked for permission or confirmation it \
+did not need.";
+
+const LOOP_NUDGE: &str = "You appear to be repeating yourself without making progress. Stop and \
+change approach: say what you have learned, what is blocking you, and try something different — \
+or report the blocker if you cannot get past it.";
+
+const DONE_NUDGE: &str = "The request does not look finished yet. Continue until it is done. If \
+something genuinely blocks you, say exactly what, instead of stopping partway or asking for \
+permission you do not need.";
+
+/// Jev as a [`StepObserver`]: nudges a looping agent, stops one that keeps
+/// looping, and sends a half-done answer back once.
+///
+/// Every failure is silent and means "carry on", for the same reason as the
+/// shell check: the loop's own ceilings are still behind this, so a Jev that
+/// is down only means the turn runs as it did before Jev existed.
+pub struct Supervisor {
+    jev: Arc<Jev>,
+    /// Loop flags so far, keyed by the turn they belong to.
+    flags: Mutex<(usize, usize)>,
+}
+
+impl Supervisor {
+    pub fn new(jev: Arc<Jev>) -> Supervisor {
+        Supervisor {
+            jev,
+            flags: Mutex::new((usize::MAX, 0)),
+        }
+    }
+
+    /// A supervisor for a new Session, when a key is available.
+    pub fn from_store() -> Option<Arc<dyn StepObserver>> {
+        let jev = Arc::new(Jev::from_store()?);
+        Some(Arc::new(Supervisor::new(jev)))
+    }
+}
+
+#[async_trait]
+impl StepObserver for Supervisor {
+    fn name(&self) -> &'static str {
+        "jev"
+    }
+
+    async fn after_step(&self, turn: &TurnView<'_>) -> Verdict {
+        if turn.step < LOOP_MIN_STEPS {
+            return Verdict::Continue;
+        }
+        let steps = turn.steps();
+        let recent = &steps[steps.len().saturating_sub(LOOP_WINDOW)..];
+        let risk = match self.jev.loop_risk(turn.request(), recent).await {
+            Ok(risk) => risk,
+            Err(e) => {
+                jev_debug(&format!("no loop check at step {}: {e}", turn.step));
+                return Verdict::Continue;
+            }
+        };
+        jev_debug(&format!("loop {risk:.3} at step {}", turn.step));
+        if risk < LOOP_THRESHOLD {
+            return Verdict::Continue;
+        }
+        let flagged = {
+            let mut flags = self.flags.lock().unwrap_or_else(|e| e.into_inner());
+            if flags.0 != turn.turn_start {
+                *flags = (turn.turn_start, 0);
+            }
+            flags.1 += 1;
+            flags.1
+        };
+        if flagged == 1 {
+            Verdict::Nudge(LOOP_NUDGE.to_string())
+        } else {
+            Verdict::Stop(format!(
+                "still repeating itself after a nudge ({:.0}% sure it is stuck)",
+                risk * 100.0
+            ))
+        }
+    }
+
+    async fn before_answer(&self, turn: &TurnView<'_>, answer: &str) -> Verdict {
+        let done = match self.jev.completion(turn.request(), &turn.steps(), answer).await {
+            Ok(done) => done,
+            Err(e) => {
+                jev_debug(&format!("no completion check: {e}"));
+                return Verdict::Continue;
+            }
+        };
+        jev_debug(&format!("done {done:.3}"));
+        if done < DONE_THRESHOLD {
+            Verdict::Nudge(DONE_NUDGE.to_string())
+        } else {
+            Verdict::Continue
+        }
+    }
+}
+
+fn loop_state(request: &str, steps: &[StepRecord]) -> String {
+    let mut state = format!(
+        "An AI coding agent is working on a request.\n\nRequest:\n{}\n\nIts most recent actions, \
+         oldest first:\n",
+        clip(request, 1500)
+    );
+    for (i, step) in steps.iter().enumerate() {
+        state.push_str(&format!(
+            "{}. {} {} → {}\n",
+            i + 1,
+            step.name,
+            clip(&step.arguments, 200),
+            clip(&step.result, 240)
+        ));
+    }
+    state
+}
+
+fn done_state(request: &str, steps: &[StepRecord], answer: &str) -> String {
+    let mut state = format!(
+        "An AI coding agent was given a request and has now stopped with a final message.\n\n\
+         Request:\n{}\n\nActions it took ({} in all):\n",
+        clip(request, 1500),
+        steps.len()
+    );
+    if steps.is_empty() {
+        state.push_str("(none)\n");
+    }
+    for step in &steps[steps.len().saturating_sub(30)..] {
+        state.push_str(&format!("- {} {}\n", step.name, clip(&step.arguments, 120)));
+    }
+    state.push_str(&format!("\nFinal message:\n{}", clip(answer, 2000)));
+    state
+}
+
+/// At most `max` characters, on one line, marked when cut.
+fn clip(text: &str, max: usize) -> String {
+    let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max {
+        flat
+    } else {
+        let cut: String = flat.chars().take(max).collect();
+        format!("{cut}…")
     }
 }
 
@@ -186,6 +410,23 @@ mod tests {
     #[tokio::test]
     async fn without_a_key_nothing_is_flagged() {
         assert_eq!(flags_shell(None, "git push --force", Path::new(".")).await, None);
+    }
+
+    #[test]
+    fn a_loop_state_numbers_recent_steps_on_one_line_each() {
+        let steps = vec![StepRecord {
+            name: "grep".into(),
+            arguments: "{\"pattern\":\"fn\nmain\"}".into(),
+            result: "a.rs:1\nb.rs:2".into(),
+        }];
+        let state = loop_state("find main", &steps);
+        assert!(state.contains("1. grep {\"pattern\":\"fn main\"} → a.rs:1 b.rs:2"), "{state}");
+    }
+
+    #[test]
+    fn clipping_is_marked_and_char_safe() {
+        assert_eq!(clip("日本語テキスト", 3), "日本語…");
+        assert_eq!(clip("short", 10), "short");
     }
 
     #[test]

@@ -479,7 +479,7 @@ pub async fn build_session(
     // real window carries the conservative 32k/110k fallback) or describe a
     // different model entirely. History must round-trip; a stale ceiling must
     // not. Only a silent probe keeps the stored values.
-    let (session, restored, session_id, limits) = match resume_from {
+    let (mut session, restored, session_id, limits) = match resume_from {
         Some(stored) => {
             let id = stored.id.clone();
             let sampling = stored.sampling.clone();
@@ -518,6 +518,9 @@ pub async fn build_session(
         ),
     };
     let context_limit = limits.context_hard;
+    if let Some(supervisor) = smithy_agent::jev::Supervisor::from_store() {
+        session.observe(supervisor);
+    }
 
     Ok(AgentHandle {
         session,

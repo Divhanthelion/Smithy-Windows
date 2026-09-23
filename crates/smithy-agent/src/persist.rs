@@ -779,8 +779,13 @@ pub fn transcript(history: &History) -> Vec<TranscriptEntry> {
         match message.role {
             Role::System => {}
             Role::User => {
-                // A tool-retry nudge is machinery, not something the user said.
-                if !message.content.starts_with("Your previous ") {
+                // A tool-retry or supervisor nudge is machinery, not something
+                // the user said.
+                if !message.content.starts_with("Your previous ")
+                    && !message
+                        .content
+                        .starts_with(crate::observe::SUPERVISOR_PREFIX)
+                {
                     out.push(TranscriptEntry::User(message.content.clone()));
                 }
             }

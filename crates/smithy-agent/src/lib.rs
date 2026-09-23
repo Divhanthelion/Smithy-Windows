@@ -51,6 +51,7 @@ pub mod jev;
 pub mod limits;
 pub mod mcp;
 pub mod message;
+pub mod observe;
 pub mod parse;
 pub mod persist;
 pub mod provider;

@@ -169,8 +169,13 @@ pub async fn boot(project: &Project, yolo: bool, skill: Option<Skill>) -> Result
         extracted.approx_tokens()
     );
 
+    let mut session = Session::new(provider, Arc::new(registry), ctx, config);
+    if let Some(supervisor) = smithy_agent::jev::Supervisor::from_store() {
+        session.observe(supervisor);
+    }
+
     Ok(Booted {
-        session: Session::new(provider, Arc::new(registry), ctx, config),
+        session,
         model_label,
         context_summary,
         notices,

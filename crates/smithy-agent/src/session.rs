@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::limits::{Budget, Limits};
 use crate::message::{History, Message};
+use crate::observe::{StepObserver, TurnView, Verdict, SUPERVISOR_PREFIX};
 use crate::parse::{parse, Action};
 use crate::provider::{Completion, CompletionRequest, Delta, Provider, ProviderError, Sampling};
 
@@ -137,6 +138,10 @@ pub struct Session {
     /// which is what used to happen: the traces vanished the moment the panel
     /// cleared, and a long session's most legible record went with them.
     reasoning: Vec<crate::persist::ReasoningEntry>,
+    /// One step of [`RETRY_DELAYS`]: a second, except in tests.
+    retry_unit: Duration,
+    /// Shown each step and each answer. See [`crate::observe`].
+    observers: Vec<Arc<dyn StepObserver>>,
 }
 
 /// Tokens billed across a session, as the endpoint reported them.
@@ -392,6 +397,8 @@ impl Session {
             last_request: Mutex::new(None),
             skill: config.skill,
             reasoning: Vec::new(),
+            retry_unit: Duration::from_secs(1),
+            observers: Vec::new(),
         }
     }
 
@@ -434,7 +441,14 @@ impl Session {
             last_request: Mutex::new(None),
             skill,
             reasoning: Vec::new(),
+            retry_unit: Duration::from_secs(1),
+            observers: Vec::new(),
         }
+    }
+
+    /// Show every step and every answer of later turns to `observer`.
+    pub fn observe(&mut self, observer: Arc<dyn StepObserver>) {
+        self.observers.push(observer);
     }
 
     /// A handle the UI can hold to stop a running turn. See [`Stopper`].
@@ -663,7 +677,9 @@ impl Session {
         events: Option<&EventSink>,
     ) -> Result<Outcome, ProviderError> {
         let cancel = self.current_cancel();
+        let turn_start = self.history.len();
         self.history.push(Message::user(user_input));
+        let mut answer_nudges = 0usize;
 
         // Seed from the previous turn's last prompt. Without this, a session
         // already over the hard ceiling pays for one full prefill per turn
@@ -711,18 +727,48 @@ impl Session {
             // runs at the loop top; a stuck completion used to run until the
             // provider's own timeout (an hour on LM Studio) against a 15-minute
             // default budget. `biased` still makes Stop win a tie.
-            let remaining = budget.remaining();
-            let completion = tokio::select! {
-                biased;
-                _ = cancel.cancelled() => {
-                    return Ok(Outcome::Stopped(CANCELLED.into()));
+            //
+            // A transient failure — the endpoint restarting, a dropped
+            // connection, a 503 — is retried with backoff rather than ending
+            // the turn. Retrying is safe for the same reason abandoning is:
+            // nothing was appended, so the next attempt sends the same bytes.
+            let mut attempt = 0;
+            let completion = loop {
+                let remaining = budget.remaining();
+                let result = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => {
+                        return Ok(Outcome::Stopped(CANCELLED.into()));
+                    }
+                    _ = tokio::time::sleep(remaining) => {
+                        return Ok(Outcome::Stopped(
+                            crate::limits::Stop::Time(self.limits.max_seconds).to_string(),
+                        ));
+                    }
+                    result = self.complete(events, remaining) => result,
+                };
+                let error = match result {
+                    Ok(completion) => break completion,
+                    Err(e) if is_transient(&e) && attempt < RETRY_DELAYS.len() => e,
+                    Err(e) => return Err(e),
+                };
+                let delay = self.retry_unit * RETRY_DELAYS[attempt];
+                attempt += 1;
+                emit(
+                    events,
+                    TurnEvent::Warning(format!(
+                        "{error} — retrying in {}s ({attempt}/{})",
+                        delay.as_secs(),
+                        RETRY_DELAYS.len()
+                    )),
+                );
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => {
+                        return Ok(Outcome::Stopped(CANCELLED.into()));
+                    }
+                    _ = tokio::time::sleep(delay.min(budget.remaining())) => {}
                 }
-                _ = tokio::time::sleep(remaining) => {
-                    return Ok(Outcome::Stopped(
-                        crate::limits::Stop::Time(self.limits.max_seconds).to_string(),
-                    ));
-                }
-                result = self.complete(events, remaining) => result?,
             };
 
             // Bill it. Recorded before anything can fail below, because a
@@ -794,6 +840,21 @@ impl Session {
                              sentences, then stop — do not re-verify or restate."
                         )));
                         continue;
+                    }
+
+                    // Once per turn, an observer may say the work is not done.
+                    // Bounded so a supervisor that is wrong cannot hold the
+                    // turn open: the second answer stands.
+                    if answer_nudges < MAX_ANSWER_NUDGES {
+                        if let Some(nudge) =
+                            self.observe_answer(turn_start, budget.step(), &answer).await
+                        {
+                            answer_nudges += 1;
+                            self.history
+                                .push(Message::assistant(completion.content.clone()));
+                            self.push_nudge(nudge, events);
+                            continue;
+                        }
                     }
 
                     self.history
@@ -884,9 +945,56 @@ impl Session {
                         self.history.push(Message::tool_result(&result));
                         forget_superseded_file(&mut self.history, &*self.provider, call, &result);
                     }
+
+                    // Every result is in: the one point a note can be appended
+                    // without splitting a call from its answer.
+                    let verdicts = self.observe_step(turn_start, budget.step()).await;
+                    for (observer, verdict) in verdicts {
+                        match verdict {
+                            Verdict::Continue => {}
+                            Verdict::Nudge(nudge) => self.push_nudge(nudge, events),
+                            Verdict::Stop(reason) => {
+                                return Ok(Outcome::Stopped(format!("{observer}: {reason}")));
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+
+    async fn observe_step(&self, turn_start: usize, step: usize) -> Vec<(&'static str, Verdict)> {
+        let view = TurnView {
+            history: &self.history,
+            turn_start,
+            step,
+        };
+        let mut verdicts = Vec::new();
+        for observer in &self.observers {
+            verdicts.push((observer.name(), observer.after_step(&view).await));
+        }
+        verdicts
+    }
+
+    /// The first observer's nudge, if any wants the turn to go on.
+    async fn observe_answer(&self, turn_start: usize, step: usize, answer: &str) -> Option<String> {
+        let view = TurnView {
+            history: &self.history,
+            turn_start,
+            step,
+        };
+        for observer in &self.observers {
+            if let Verdict::Nudge(nudge) = observer.before_answer(&view, answer).await {
+                return Some(nudge);
+            }
+        }
+        None
+    }
+
+    fn push_nudge(&mut self, nudge: String, events: Option<&EventSink>) {
+        emit(events, TurnEvent::Warning(format!("supervisor: {nudge}")));
+        self.history
+            .push(Message::user(format!("{SUPERVISOR_PREFIX}{nudge}")));
     }
 
     async fn complete(
@@ -917,6 +1025,30 @@ impl Session {
             }
             None => self.provider.complete(request, None).await,
         }
+    }
+}
+
+/// Backoff between attempts at one completion, in [`Session::retry_unit`]s.
+///
+/// About two minutes in all, which is long enough for a local server to be
+/// restarted and reload its model — the case an overnight run actually meets —
+/// and short enough that a server that is truly gone ends the turn.
+const RETRY_DELAYS: [u32; 5] = [2, 5, 15, 30, 60];
+
+/// How many times per turn an observer may send the model back to work.
+const MAX_ANSWER_NUDGES: usize = 1;
+
+/// Failures that say nothing about the request, only about the moment.
+///
+/// A stall is deliberately absent: it already spent its whole idle window, and
+/// a model that went silent once will usually do it again. A 4xx other than
+/// 408/429 is the request's own fault and would fail identically.
+fn is_transient(error: &ProviderError) -> bool {
+    match error {
+        ProviderError::Unreachable { .. } => true,
+        ProviderError::Http { status, .. } => matches!(status, 408 | 429 | 500..=599),
+        ProviderError::BadResponse(message) => message.starts_with("stream read error"),
+        _ => false,
     }
 }
 
@@ -1077,6 +1209,161 @@ mod tests {
             SessionConfig::new("test prompt"),
         );
         (tmp, session, provider)
+    }
+
+    // --- transient failures ------------------------------------------------
+
+    fn flaky(
+        failures: Vec<ProviderError>,
+        script: Vec<Completion>,
+    ) -> (tempfile::TempDir, Session, Arc<crate::provider::test_support::FlakyProvider>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = Workspace::open(tmp.path()).unwrap();
+        let provider = Arc::new(crate::provider::test_support::FlakyProvider::new(
+            failures, script,
+        ));
+        let mut session = Session::new(
+            provider.clone(),
+            Arc::new(Registry::core()),
+            Arc::new(ToolCtx::new(ws)),
+            SessionConfig::new("test prompt"),
+        );
+        session.retry_unit = Duration::from_millis(1);
+        (tmp, session, provider)
+    }
+
+    fn http(status: u16) -> ProviderError {
+        ProviderError::Http {
+            status,
+            body: "x".into(),
+        }
+    }
+
+    /// One dropped connection used to end the turn — an overnight run lost to
+    /// a server restart.
+    #[tokio::test]
+    async fn a_transient_failure_is_retried_and_the_turn_still_answers() {
+        let refused = ProviderError::Unreachable {
+            endpoint: "http://192.0.2.2:8000/v1".into(),
+            source: "connection refused".into(),
+        };
+        let (_t, mut s, provider) = flaky(vec![http(503), refused], vec![answer("done")]);
+
+        let outcome = s.run_turn("go", None).await.unwrap();
+
+        assert!(matches!(&outcome, Outcome::Answer(a) if a == "done"), "{outcome:?}");
+        assert_eq!(provider.call_count(), 3);
+        assert_eq!(
+            s.history().len(),
+            3,
+            "failed attempts append nothing: system, user, answer"
+        );
+    }
+
+    /// A 400 is the request's fault and would fail the same way every time.
+    #[tokio::test]
+    async fn a_request_error_is_not_retried() {
+        let (_t, mut s, provider) = flaky(vec![http(400)], vec![answer("unreached")]);
+        assert!(s.run_turn("go", None).await.is_err());
+        assert_eq!(provider.call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn retries_run_out() {
+        let failures = (0..=RETRY_DELAYS.len()).map(|_| http(502)).collect();
+        let (_t, mut s, provider) = flaky(failures, vec![answer("unreached")]);
+        assert!(s.run_turn("go", None).await.is_err());
+        assert_eq!(provider.call_count(), RETRY_DELAYS.len() + 1);
+    }
+
+    // --- observers ---------------------------------------------------------
+
+    /// Answers from a script, in order, whichever hook asks.
+    struct ScriptedObserver {
+        after_step: Mutex<std::collections::VecDeque<Verdict>>,
+        before_answer: Mutex<std::collections::VecDeque<Verdict>>,
+        seen_steps: Mutex<Vec<usize>>,
+    }
+
+    impl ScriptedObserver {
+        fn new(after_step: Vec<Verdict>, before_answer: Vec<Verdict>) -> Arc<Self> {
+            Arc::new(Self {
+                after_step: Mutex::new(after_step.into()),
+                before_answer: Mutex::new(before_answer.into()),
+                seen_steps: Mutex::new(Vec::new()),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl StepObserver for ScriptedObserver {
+        fn name(&self) -> &'static str {
+            "scripted"
+        }
+        async fn after_step(&self, turn: &TurnView<'_>) -> Verdict {
+            self.seen_steps.lock().unwrap().push(turn.steps().len());
+            self.after_step.lock().unwrap().pop_front().unwrap_or(Verdict::Continue)
+        }
+        async fn before_answer(&self, _turn: &TurnView<'_>, _answer: &str) -> Verdict {
+            self.before_answer.lock().unwrap().pop_front().unwrap_or(Verdict::Continue)
+        }
+    }
+
+    fn read_notes() -> Completion {
+        tool_call("c1", "read", r#"{"path":"notes.txt"}"#)
+    }
+
+    /// The observer sees the step it follows, with its result, and a nudge
+    /// lands after the result — never between a call and its answer.
+    #[tokio::test]
+    async fn a_nudge_after_a_step_is_appended_after_its_result() {
+        let (_t, mut s, _) = harness(vec![read_notes(), answer("FJORD")]);
+        let observer = ScriptedObserver::new(vec![Verdict::Nudge("change approach".into())], vec![]);
+        s.observe(observer.clone());
+
+        let outcome = s.run_turn("find the word", None).await.unwrap();
+
+        assert!(matches!(&outcome, Outcome::Answer(a) if a == "FJORD"), "{outcome:?}");
+        assert_eq!(*observer.seen_steps.lock().unwrap(), vec![1]);
+        let messages = s.history().messages();
+        let nudge = messages
+            .iter()
+            .position(|m| m.content == format!("{SUPERVISOR_PREFIX}change approach"))
+            .expect("nudge appended");
+        assert_eq!(messages[nudge - 1].role, crate::message::Role::Tool);
+    }
+
+    #[tokio::test]
+    async fn a_stop_after_a_step_ends_the_turn_with_its_reason() {
+        let (_t, mut s, provider) = harness(vec![read_notes(), answer("unreached")]);
+        s.observe(ScriptedObserver::new(vec![Verdict::Stop("looping".into())], vec![]));
+
+        let outcome = s.run_turn("find the word", None).await.unwrap();
+
+        assert!(matches!(&outcome, Outcome::Stopped(r) if r == "scripted: looping"), "{outcome:?}");
+        assert_eq!(provider.call_count(), 1, "no completion after the stop");
+    }
+
+    /// Sent back once; the second answer stands whatever the observer thinks.
+    #[tokio::test]
+    async fn an_unfinished_answer_is_sent_back_once_only() {
+        let (_t, mut s, provider) = harness(vec![answer("I would read the file"), answer("FJORD")]);
+        let nudge = || Verdict::Nudge("not done".into());
+        s.observe(ScriptedObserver::new(vec![], vec![nudge(), nudge()]));
+
+        let outcome = s.run_turn("find the word", None).await.unwrap();
+
+        assert!(matches!(&outcome, Outcome::Answer(a) if a == "FJORD"), "{outcome:?}");
+        assert_eq!(provider.call_count(), 2);
+    }
+
+    #[test]
+    fn supervisor_nudges_are_hidden_from_the_transcript() {
+        let mut history = History::new("sys");
+        history.push(Message::user("real request"));
+        history.push(Message::user(format!("{SUPERVISOR_PREFIX}keep going")));
+        let entries = crate::persist::transcript(&history);
+        assert_eq!(entries.len(), 1, "{entries:?}");
     }
 
     // --- cancellation -----------------------------------------------------
