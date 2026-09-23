@@ -206,12 +206,71 @@ impl Drop for Job {
     }
 }
 
+/// What a command did, in full. The tool formats this for the model; a
+/// caller that decides on the result (the runner's checks) reads it directly,
+/// because the model-facing form is middle-truncated and a test summary in the
+/// middle of a long run is exactly what truncation would drop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Captured {
+    /// `None` when it was killed at the timeout, or ended by a signal.
+    pub code: Option<i32>,
+    pub timed_out: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl Captured {
+    pub fn success(&self) -> bool {
+        self.code == Some(0) && !self.timed_out
+    }
+
+    /// Stdout, then stderr, the way a terminal would interleave them roughly.
+    pub fn combined(&self) -> String {
+        let mut combined = self.stdout.clone();
+        if !self.stderr.trim().is_empty() {
+            if !combined.is_empty() && !combined.ends_with('\n') {
+                combined.push('\n');
+            }
+            combined.push_str(&self.stderr);
+        }
+        combined
+    }
+}
+
 /// Spawn `sh -c command`, capture combined output, kill it if it overruns.
 pub fn run_with_timeout(
     command: &str,
     cwd: &std::path::Path,
     timeout: Duration,
 ) -> Result<String, String> {
+    let captured = run_captured(command, cwd, timeout)?;
+    let mut result = middle_truncate(captured.combined().trim_end(), MAX_OUTPUT_CHARS);
+
+    if captured.timed_out {
+        result = format!(
+            "[command killed after {}s timeout]\n{result}",
+            timeout.as_secs()
+        );
+    } else if captured.code != Some(0) {
+        let code = captured
+            .code
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".into());
+        result = format!("[exit {code}]\n{result}");
+    }
+    if result.trim().is_empty() {
+        result = "[no output]".to_string();
+    }
+    Ok(result)
+}
+
+/// Spawn `sh -c command` with the secret-scrubbed environment, and return
+/// everything it wrote. Killed, with its whole process tree, at `timeout`.
+pub fn run_captured(
+    command: &str,
+    cwd: &std::path::Path,
+    timeout: Duration,
+) -> Result<Captured, String> {
     let mut builder = Command::new(shell()?);
     builder
         .arg("-c")
@@ -293,35 +352,12 @@ pub fn run_with_timeout(
     let out = rx_o.recv_timeout(DRAIN_GRACE).unwrap_or_default();
     let err = rx_e.recv_timeout(DRAIN_GRACE).unwrap_or_default();
 
-    let mut combined = String::new();
-    combined.push_str(&String::from_utf8_lossy(&out));
-    let err_str = String::from_utf8_lossy(&err);
-    if !err_str.trim().is_empty() {
-        if !combined.is_empty() && !combined.ends_with('\n') {
-            combined.push('\n');
-        }
-        combined.push_str(&err_str);
-    }
-    let mut result = middle_truncate(combined.trim_end(), MAX_OUTPUT_CHARS);
-
-    if timed_out {
-        result = format!(
-            "[command killed after {}s timeout]\n{result}",
-            timeout.as_secs()
-        );
-    } else if let Some(status) = status {
-        if !status.success() {
-            let code = status
-                .code()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "signal".into());
-            result = format!("[exit {code}]\n{result}");
-        }
-    }
-    if result.trim().is_empty() {
-        result = "[no output]".to_string();
-    }
-    Ok(result)
+    Ok(Captured {
+        code: status.and_then(|s| s.code()),
+        timed_out,
+        stdout: String::from_utf8_lossy(&out).into_owned(),
+        stderr: String::from_utf8_lossy(&err).into_owned(),
+    })
 }
 
 /// Hygiene, not a boundary: the child inherits the process environment, which

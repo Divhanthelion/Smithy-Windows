@@ -8,6 +8,7 @@ members = [
     "crates/smithy-tools",
     "crates/smithy-agent",
     "crates/smithy-project",
+    "crates/smithy-run",
     "crates/smithy-sky",
     "crates/smithy-voice",
 ]
@@ -34,6 +35,7 @@ smithy-fisherman = { path = "crates/smithy-fisherman" }
 smithy-tools = { path = "crates/smithy-tools" }
 smithy-agent = { path = "crates/smithy-agent" }
 smithy-project = { path = "crates/smithy-project" }
+smithy-run = { path = "crates/smithy-run" }
 smithy-sky = { path = "crates/smithy-sky" }
 smithy-voice = { path = "crates/smithy-voice" }
 
