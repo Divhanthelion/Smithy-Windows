@@ -35,6 +35,11 @@ path = "examples/fisherman_preview.rs"
 required-features = ["harness"]
 
 [[example]]
+name = "look"
+path = "examples/look.rs"
+required-features = ["harness"]
+
+[[example]]
 name = "sheets"
 path = "examples/sheets.rs"
 required-features = ["harness"]

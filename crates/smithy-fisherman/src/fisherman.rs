@@ -150,6 +150,9 @@ pub const IRON: Color = Color::from_rgb8(17, 20, 27);
 /// The gold rim light, the frame's inlay.
 pub const RIM: Color = Color::from_rgb8(186, 148, 72);
 pub const RIM_BRIGHT: Color = Color::from_rgb8(240, 210, 140);
+/// His edge: RIM as it looks at 0.85 over the steel, made opaque so the
+/// strokes of overlapping pieces cannot stack.
+pub const FIGURE_EDGE: Color = Color::from_rgb8(164, 132, 70);
 /// The line, visible against the moulding without competing with it.
 pub const LINE: Color = Color::from_rgb8(126, 138, 162);
 pub const FIRE_CORE: Color = Color::from_rgb8(255, 224, 150);
@@ -596,20 +599,43 @@ pub fn figure_paths(pose: &Pose) -> Vec<BezPath> {
         pose.hip.y + (pose.knee.y - pose.hip.y) * 0.92,
     );
     let far_foot = Point::new(pose.hip.x - (pose.foot.x - pose.hip.x) * 0.75, pose.foot.y);
+    let disc = |centre: Point, radius: f64| {
+        BezPath::from_vec(Circle::new(centre, radius).path_elements(0.05).collect())
+    };
+    // A boot: the foot turned forward, which is most of what says which way
+    // he faces when he is standing still. A limb that simply stops reads as a
+    // peg.
+    let boot = |foot: Point, width: f64| {
+        taper(
+            Point::new(foot.x - r * 0.2, foot.y),
+            Point::new(foot.x + r * 0.9, foot.y + r * 0.1),
+            width,
+            width * 0.7,
+        )
+    };
 
     vec![
-        // Far leg first, so the near one overlaps it.
+        // Far leg first, so the near one overlaps it. The discs round the
+        // joints: tapered quads end square, and two meeting at an angle leave
+        // a notch on the outside of every knee and elbow.
         taper(pose.hip, trail, r * 1.3, r * 1.0),
+        disc(trail, r * 0.5),
         taper(trail, far_foot, r * 1.0, r * 0.7),
+        boot(far_foot, r * 0.7),
         // Near leg.
         taper(pose.hip, pose.knee, r * 1.5, r * 1.2),
+        disc(pose.knee, r * 0.6),
         taper(pose.knee, pose.foot, r * 1.2, r * 0.8),
-        // Trunk, hip to shoulder.
+        boot(pose.foot, r * 0.8),
+        // Trunk, hip to shoulder, rounded at both ends.
+        disc(pose.hip, r * 1.0),
         taper(pose.hip, pose.shoulder, r * 2.1, r * 1.7),
+        disc(pose.shoulder, r * 0.85),
         // Arm.
         taper(pose.shoulder, pose.elbow, r * 0.9, r * 0.8),
+        disc(pose.elbow, r * 0.4),
         taper(pose.elbow, pose.hand, r * 0.8, r * 0.6),
-        BezPath::from_vec(Circle::new(pose.head, r).path_elements(0.05).collect()),
+        disc(pose.head, r),
         crown,
         brim,
     ]
@@ -639,19 +665,75 @@ pub fn line_path(tip: Point, depth: f64, sway: f64) -> BezPath {
     path
 }
 
+/// His unit box, as a fraction of the rail.
+///
+/// It was 0.80, which made him taller than his own hut roof and all — 106px
+/// against 93px at 3x — and three times the height of his door. The hut
+/// cannot grow to match: its roof has to stay under the rail's top edge, where
+/// the shell paints over anything higher. So he fits the house rather than the
+/// house fitting him, and standing, hat and all, he is a hair shorter than the
+/// doorway he walks through.
+pub const FIGURE_SCALE: f64 = 0.50;
+
+/// The hut's width and wall height, in rails.
+pub const HUT_WIDTH: f64 = 1.40;
+pub const HUT_WALL_HEIGHT: f64 = 0.62;
+
+/// Where the doorway's centre sits across the hut's front, as a fraction of
+/// its width. Left of centre, so the window has the right-hand wall.
+pub const DOOR_CENTRE: f64 = 0.38;
+
+/// Where his feet are in the unit box. The poses stand on this line.
+const FEET: f64 = 0.97;
+
 /// The stage along the rail: his scale, where it starts, and how far it runs.
 ///
 /// Shared with the preview harness, because a layout that exists in two
 /// places is a layout that drifts — and it already has.
 pub fn stage_layout(w: f64, band: f64) -> (f64, f64, f64) {
-    let scale = band * 0.80;
+    let scale = band * FIGURE_SCALE;
     // Clear of the corner ornament: the volutes reach about `band * 1.6`
-    // along the rail (the clearance the vines keep), and the hut stands
-    // `scale * 0.35` to the left of the stage — so anything less than this
-    // and the hut grows out of the corner stone.
+    // along the rail (the clearance the vines keep), and the hut's roof
+    // overhangs to about `band * 0.32` left of the stage — so anything less
+    // than this and the hut grows out of the corner stone.
     let left = band * 2.1;
     let width = (w - left - band * 1.5 - scale * (1.0 + ROD_REACH)).max(1.0);
     (scale, left, width)
+}
+
+/// The line he and the hut both stand on, just above the rail's bottom edge.
+///
+/// One line for both. They used to be placed separately — the hut on a base,
+/// him from the top of his box — and agreed only by arithmetic that happened
+/// to come out close.
+pub fn ground(h: f64, band: f64) -> f64 {
+    h - band * 0.08
+}
+
+/// Where the fire burns: in front of him as he crouches at [`Place::Fire`],
+/// on the ground. One definition, shared with the harness check that it stays
+/// there — whose own copy of the old layout was looking for the fire a
+/// quarter-rail from where it now is.
+pub fn fire_pit(w: f64, h: f64, band: f64) -> Point {
+    let (scale, stage_left, stage) = stage_layout(w, band);
+    Point::new(
+        stage_left + place_position(Place::Fire) * stage + scale * 0.80,
+        ground(h, band) - scale * 0.05,
+    )
+}
+
+/// The hut on this rail. One definition: there were four — in `paint`, in both
+/// harness tiers and in a test — and a layout written four times drifts.
+///
+/// The doorway is centred on where he stands at [`Place::Hut`]. He arrives
+/// there from the right, facing left, so mirrored his body's centre is 0.70
+/// of his box. Before, the door sat wherever the hut's width put it, and
+/// "walking home" ended with him standing in front of the window.
+pub fn hut_for(w: f64, h: f64, band: f64) -> HutGeometry {
+    let (scale, stage_left, _) = stage_layout(w, band);
+    let width = band * HUT_WIDTH;
+    let door_centre = stage_left + scale * 0.70;
+    HutGeometry::new(door_centre - width * DOOR_CENTRE, ground(h, band), width, band)
 }
 
 /// Everything a frame needs. No clock, no globals — a value.
@@ -731,14 +813,9 @@ pub fn paint(ink: &mut impl Ink, scene: &Scene) {
     let block_place = scene.place;
 
     let (scale, stage_left, stage) = stage_layout(w, band);
-    let top = h - band + (band - scale) * 0.55;
+    let top = ground(h, band) - scale * FEET;
 
-    let hut = HutGeometry::new(
-        stage_left - scale * 0.35,
-        h - band * 0.10,
-        scale * 1.45,
-        band,
-    );
+    let hut = hut_for(w, h, band);
     // While he is walking home at the end of the build, the door answers to
     // that walk rather than to the routine.
     let door_open = if completion < 1.0 {
@@ -796,11 +873,7 @@ pub fn paint(ink: &mut impl Ink, scene: &Scene) {
         // The fire is a fixture at the pit, not a prop that follows him —
         // a hearth that teleports to the doorstep for dinner reads as a
         // decal, the same failure as flames without a glow.
-        let fire_base = Point::new(
-            stage_left + place_position(Place::Fire) * stage + scale * 0.80,
-            top + scale * 0.92,
-        );
-        draw_fire(ink, &block, progress, fire_base, scale, frame);
+        draw_fire(ink, &block, progress, fire_pit(w, h, band), scale, frame);
         draw_line_and_rod(ink, &block, &pose, &at, scale, h, frame);
         draw_figure(ink, &pose, &at, scale);
         draw_props(ink, &block, progress, &pose, &at, scale, frame);
@@ -899,15 +972,30 @@ pub fn face_for(
     }
 }
 
+/// His outline's width outside the fill, as a fraction of `scale`.
+pub const FIGURE_EDGE_FRAC: f64 = 0.05;
+
 fn draw_figure(ink: &mut impl Ink, pose: &Pose, at: &impl Fn(Point) -> Point, scale: f64) {
     ink.begin(Part::Figure);
-    let edge = (scale * 0.035).max(0.5);
-    for path in figure_paths(pose) {
-        let placed = place(&path, at);
-        // Dark body, gold edge — the frame's own treatment, so he belongs to
-        // the same object rather than sitting on it.
-        ink.fill(&placed, IRON);
-        ink.stroke(&placed, RIM.with_alpha(0.85), edge);
+    let edge = (scale * FIGURE_EDGE_FRAC).max(0.5);
+    let pieces: Vec<BezPath> = figure_paths(pose).iter().map(|p| place(p, at)).collect();
+    // Dark body, gold edge — the frame's own treatment, so he belongs to the
+    // same object rather than sitting on it.
+    //
+    // **One silhouette, one edge.** Each piece used to be filled and edged on
+    // its own, so every overlap drew a gold seam through him — knee, hip, the
+    // hat on the head — and he read as boxes stacked in the shape of a man.
+    // Every edge goes down first at twice the width, then every fill over the
+    // top: the fills cover the inner half of each edge and every seam between
+    // pieces, and only the outer half of the silhouette's edge is left.
+    //
+    // Opaque, not RIM at 0.85: where two pieces' edges overlap outside the
+    // fill, translucent strokes stack into brighter lumps along the outline.
+    for piece in &pieces {
+        ink.stroke(piece, FIGURE_EDGE, edge * 2.0);
+    }
+    for piece in &pieces {
+        ink.fill(piece, IRON);
     }
 }
 
@@ -1215,10 +1303,25 @@ impl HutGeometry {
             left,
             base,
             width,
-            // The roof peaks at 1.34 of this, so it has to leave room: a hut
-            // that grew out of the top of the rail would vanish the same way.
-            height: band * 0.52,
+            // The roof peaks at 1.34 of this and the chimney at 1.30, so it
+            // has to leave room: a hut that grew out of the top of the rail
+            // would vanish the same way.
+            height: band * HUT_WALL_HEIGHT,
         }
+    }
+
+    /// The doorway: tall enough for him, hat and all, to walk through.
+    ///
+    /// It was 0.52 of the wall, a third of his height — a cat flap.
+    pub fn door(&self) -> Rect {
+        let half = self.width * 0.08;
+        let centre = self.left + self.width * DOOR_CENTRE;
+        Rect::new(
+            centre - half,
+            self.base - self.height * 0.85,
+            centre + half,
+            self.base,
+        )
     }
 
     /// The window, which is the whole point of the hut.
@@ -1233,12 +1336,24 @@ impl HutGeometry {
         Rect::new(x, y, x + w, y + h)
     }
 
+    /// The chimney stack, from under the roof to its mouth.
+    ///
+    /// It used to stop at the eave, entirely below the roofline, so it drew as
+    /// a second small window with smoke coming out of the wall. It rises
+    /// through the roof now; the roof is drawn over its foot.
+    pub fn chimney_stack(&self) -> Rect {
+        Rect::new(
+            self.left + self.width * 0.18,
+            self.base - self.height * 1.30,
+            self.left + self.width * 0.28,
+            self.base - self.height * 1.05,
+        )
+    }
+
     /// The chimney's mouth, where smoke leaves.
     pub fn chimney(&self) -> Point {
-        Point::new(
-            self.left + self.width * 0.24,
-            self.base - self.height * 1.02,
-        )
+        let stack = self.chimney_stack();
+        Point::new((stack.x0 + stack.x1) / 2.0, stack.y0)
     }
 }
 
@@ -1362,6 +1477,15 @@ fn draw_hut(
         ink.stroke(&shape_path(&board), RIM.with_alpha(0.30), edge * 0.7);
     }
 
+    // Before the roof, so the roof covers its foot and only the stack above
+    // the slope shows. The chimney goes up after the roof in the build, but a
+    // chimney with no roof yet is not drawn at all, so the order holds.
+    if chimney && roofed {
+        let stack = hut.chimney_stack();
+        ink.fill(&shape_path(&stack), HUT_ROOF);
+        ink.stroke(&shape_path(&stack), RIM.with_alpha(0.5), edge * 0.8);
+    }
+
     if roofed {
         // Pitched, and overhanging both walls — the overhang is most of what
         // makes a box read as a building.
@@ -1374,23 +1498,12 @@ fn draw_hut(
         ink.stroke(&roof, RIM.with_alpha(0.6), edge);
     }
 
-    if chimney {
-        let stack = Rect::new(
-            left + w * 0.18,
-            base - h * 1.02,
-            left + w * 0.30,
-            base - h * 0.80,
-        );
-        ink.fill(&shape_path(&stack), HUT_ROOF);
-        ink.stroke(&shape_path(&stack), RIM.with_alpha(0.5), edge * 0.8);
-    }
-
     if doored {
         // The doorway is a hole; the door is a panel over it that narrows as
         // it swings. At this size a panel shrinking to a sliver reads as a door
         // opening far better than any attempt at perspective would.
-        let (x0, x1) = (left + w * 0.30, left + w * 0.46);
-        let top = base - h * 0.52;
+        let doorway = hut.door();
+        let (x0, x1, top) = (doorway.x0, doorway.x1, doorway.y0);
         ink.fill(&shape_path(&Rect::new(x0, top, x1, base)), DOORWAY);
         // Lamplight spills through the open door. The window gets all the
         // attention, but the door opening onto a lit room is the warmer cue —
@@ -1462,6 +1575,9 @@ fn draw_window(
         )),
         LAMP_DEEP.with_alpha(0.16 * lit as f32),
     );
+    // Opaque glass first: the lamp over a bare wall let the planks show
+    // through the pane, which read as blinds.
+    ink.fill(&shape_path(&pane), LAMP_DEEP);
     ink.fill(
         &shape_path(&pane),
         LAMP.with_alpha((0.55 + 0.4 * lit) as f32),
@@ -1481,33 +1597,43 @@ fn draw_window(
             Doing::Sleeping | Doing::Walking | Doing::Waking
         )
     {
-        let cx0 = pane.x0 + pane.width() * 0.55;
-        let head = pane.y0 + pane.height() * 0.34;
-        ink.fill(
-            &shape_path(&Circle::new(Point::new(cx0, head), pane.height() * 0.15)),
-            HUT_ROOF,
+        // A bust: shoulders, head, and the hat — the hat is how you know it is
+        // *him* in there. It used to be a circle on a rectangle with the book
+        // a pale block beside it, which read as a thumbs-up.
+        let (pw, ph) = (pane.width(), pane.height());
+        // Right of the mullion, which would otherwise split his head in two.
+        let cx = pane.x0 + pw * 0.72;
+        let head = Point::new(cx, pane.y0 + ph * 0.46);
+        let r = ph * 0.14;
+        let shoulders_top = head.y + r * 0.9;
+        let mut bust = BezPath::new();
+        bust.move_to(Point::new(cx - pw * 0.26, pane.y1));
+        bust.quad_to(
+            Point::new(cx - pw * 0.24, shoulders_top),
+            Point::new(cx, shoulders_top),
         );
-        // Shoulders, and whatever is in front of him.
-        ink.fill(
-            &shape_path(&Rect::new(
-                cx0 - pane.width() * 0.22,
-                head + pane.height() * 0.12,
-                cx0 + pane.width() * 0.20,
-                pane.y1,
-            )),
-            HUT_ROOF,
+        bust.quad_to(
+            Point::new(cx + pw * 0.24, shoulders_top),
+            Point::new(cx + pw * 0.26, pane.y1),
         );
+        bust.close_path();
+        ink.fill(&bust, HUT_ROOF);
+        ink.fill(&shape_path(&Circle::new(head, r)), HUT_ROOF);
+        let brim = Ellipse::new(Point::new(cx, head.y - r * 0.55), (r * 1.7, r * 0.28), 0.0);
+        ink.fill(&shape_path(&brim), HUT_ROOF);
+        let crown = Ellipse::new(Point::new(cx, head.y - r * 1.05), (r * 0.95, r * 0.6), 0.0);
+        ink.fill(&shape_path(&crown), HUT_ROOF);
         if block.doing == Doing::Reading {
-            // The book, edge-on and catching the lamp.
-            ink.fill(
-                &shape_path(&Rect::new(
-                    cx0 - pane.width() * 0.44,
-                    head + pane.height() * 0.22,
-                    cx0 - pane.width() * 0.16,
-                    head + pane.height() * 0.52,
-                )),
-                PAGE.with_alpha(0.85),
-            );
+            // The book, open and tipped up to the lamp: two pages meeting at
+            // the spine, in front of his chest.
+            let spine = Point::new(cx - pw * 0.30, pane.y1 - ph * 0.10);
+            let mut pages = BezPath::new();
+            pages.move_to(spine);
+            pages.line_to(Point::new(spine.x - pw * 0.14, spine.y - ph * 0.22));
+            pages.line_to(Point::new(spine.x - pw * 0.02, spine.y - ph * 0.30));
+            pages.line_to(Point::new(spine.x + pw * 0.10, spine.y - ph * 0.22));
+            pages.close_path();
+            ink.fill(&pages, PAGE.with_alpha(0.9));
         }
     }
 
@@ -1535,15 +1661,16 @@ fn draw_chimney_smoke(ink: &mut impl Ink, hut: &HutGeometry, strength: f64, fram
         // Capped so the puff stays on the rail: the shell is stacked after the
         // fisherman and paints over anything higher — drawn and covered is
         // indistinguishable from never drawn. The chimney mouth sits about
-        // 0.71 hut-heights below the rail's top.
-        let rise = phase * h * 0.65;
+        // 0.18 hut-heights below the rail's top, so there is little room to
+        // rise, and the breeze takes it along the roof instead.
+        let rise = phase * h * 0.12;
         // Drifting as it climbs, and widening — smoke that went straight up in
         // a column would read as a chimney diagram.
-        let drift = phase * phase * h * 0.30;
+        let drift = phase * h * 0.75;
         ink.fill(
             &shape_path(&Circle::new(
                 Point::new(mouth.x + drift, mouth.y - rise),
-                (h * 0.05).max(0.7) * (0.6 + phase * 1.9),
+                (h * 0.05).max(0.7) * (0.6 + phase * 1.2),
             )),
             SMOKE.with_alpha((1.0 - phase) as f32 * 0.36 * strength as f32),
         );
@@ -1681,15 +1808,16 @@ mod tests {
         let forward = pose_for(Doing::Walking, 0.0, 0.0);
         let mid = pose_for(Doing::Walking, 1.0 / (strides() * 2.0), 0.0);
 
-        // Exactly ten filled parts: two legs of two segments, a trunk, two arm
-        // segments, a head, a crown and a brim.
+        // Exactly seventeen filled parts: two legs of two segments with a knee
+        // disc and a boot each, a hip disc, a trunk, a shoulder disc, two arm
+        // segments with an elbow disc, a head, a crown and a brim.
         //
         // `>= 8` was the first version of this and it caught nothing — take a
         // leg away and there are still eight. A threshold that a broken figure
         // satisfies is not a threshold.
         assert_eq!(
             figure_paths(&forward).len(),
-            10,
+            17,
             "the figure has the wrong number of parts — a limb is missing"
         );
 
@@ -1969,8 +2097,7 @@ mod hut_tests {
     #[test]
     fn the_hut_clears_the_corner_ornament() {
         let band = 44.0;
-        let (scale, stage_left, _) = stage_layout(1280.0, band);
-        let hut = HutGeometry::new(stage_left - scale * 0.35, 600.0, scale * 1.45, band);
+        let hut = hut_for(1280.0, 600.0, band);
 
         let ornament_reach = band * 1.6;
         assert!(

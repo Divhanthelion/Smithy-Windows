@@ -233,13 +233,7 @@ fn hidden_indoors() -> CheckResult {
         }
 
         if lit > 0.05 {
-            let (scale, stage_left, _) = stage_layout(WIDTH, BAND);
-            let hut = f::HutGeometry::new(
-                stage_left - scale * 0.35,
-                height() - BAND * 0.10,
-                scale * 1.45,
-                BAND,
-            );
+            let hut = f::hut_for(WIDTH, height(), BAND);
             let win = hut.window();
             let mut warm = 0u64;
             let x0 = win.x0.max(0.0) as u32;
@@ -281,9 +275,15 @@ fn hidden_indoors() -> CheckResult {
 fn right_size() -> CheckResult {
     // Figure bbox height ∈ [0.5, 1.1] × scale — catches a smudge or a giant
     // from a scale bug. Cheap; whole class. Part mask, not IRON colour.
+    //
+    // The silhouette's edge lies outside the fill since the figure became one
+    // outlined shape rather than seventeen outlined pieces, so the box is one
+    // edge taller at each end, and one pixel more because it counts both end
+    // rows. Derived, not widened: the 0.8 scale this change replaced would
+    // still measure ~1.6× and fail.
     let (scale, _, _) = stage_layout(WIDTH, BAND);
     let lo = 0.5 * scale;
-    let hi = 1.1 * scale;
+    let hi = (1.1 + 2.0 * f::FIGURE_EDGE_FRAC) * scale + 1.0;
     let mut worst = 0.0;
     let mut failures = 0u64;
 

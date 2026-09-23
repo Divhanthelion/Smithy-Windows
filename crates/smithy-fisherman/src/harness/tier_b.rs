@@ -4,11 +4,9 @@
 //! that measurement. Widening a threshold to pass is deleting the check; if
 //! a check is red for a real bug, leave it red.
 
-use kurbo::Point;
-
 use crate::fisherman::{
-    self as f, door_glow, door_openness, place_position, scene_at, stage_layout, window_light,
-    Scene, BUILD_SECONDS,
+    self as f, door_glow, door_openness, scene_at, stage_layout, window_light, Scene,
+    BUILD_SECONDS,
 };
 use crate::routine::{Doing, Place};
 
@@ -153,12 +151,8 @@ fn fire_where_fire_is() -> CheckResult {
         ..scene
     };
     let ink = render_scene(&scene);
-    let (scale, stage_left, stage) = stage_layout(WIDTH, BAND);
-    let top = height() - BAND + (BAND - scale) * 0.55;
-    let fire_base = Point::new(
-        stage_left + place_position(Place::Fire) * stage + scale * 0.80,
-        top + scale * 0.92,
-    );
+    let (scale, _, _) = stage_layout(WIDTH, BAND);
+    let fire_base = f::fire_pit(WIDTH, height(), BAND);
     // Generous pit bbox — flames flicker and sparks rise; the failure mode
     // is the whole hearth at the doorstep, not a spark one band high.
     let pad = scale * 0.55;
@@ -243,18 +237,9 @@ fn light_agrees() -> CheckResult {
         door,
     );
     let ink = render_scene(&arriving);
-    let (scale, stage_left, _) = stage_layout(WIDTH, BAND);
-    let hut = f::HutGeometry::new(
-        stage_left - scale * 0.35,
-        height() - BAND * 0.10,
-        scale * 1.45,
-        BAND,
-    );
-    // Doorway region: left portion of the hut wall.
-    let door_x0 = hut.left;
-    let door_x1 = hut.left + hut.width * 0.45;
-    let door_y0 = hut.base - hut.height;
-    let door_y1 = hut.base;
+    let hut = f::hut_for(WIDTH, height(), BAND);
+    let doorway = hut.door();
+    let (door_x0, door_x1, door_y0, door_y1) = (doorway.x0, doorway.x1, doorway.y0, doorway.y1);
     let mut warm = 0u64;
     for y in door_y0.max(0.0) as u32..door_y1.min(height()) as u32 {
         for x in door_x0.max(0.0) as u32..door_x1.min(WIDTH) as u32 {
