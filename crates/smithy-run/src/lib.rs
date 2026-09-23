@@ -4,6 +4,7 @@
 //! this crate for the decisions and the order of authority the runner keeps:
 //! Checks, then mechanical rules, then Jev, then the model.
 
+pub mod cheat;
 pub mod check;
 pub mod decisions;
 pub mod git;

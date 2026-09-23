@@ -6463,6 +6463,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "similar",
  "smithy-agent",
  "smithy-project",
  "smithy-tools",
