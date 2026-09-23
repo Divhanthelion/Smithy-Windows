@@ -16,7 +16,12 @@
 pub fn place_position(place: Place) -> f64 {
     match place {
         Place::Hut => 0.0,
-        Place::Doorstep => 0.10,
+        // Beside the door, where a doorstep is. It was 0.10 — a couple of
+        // hut-widths out on open ground — because every walk took the same
+        // twelve seconds, and a short one spent them stepping in place.
+        // Walks now keep a constant pace (see `arrival_for`), so it can be
+        // where it belongs.
+        Place::Doorstep => 0.015,
         Place::Garden => 0.22,
         Place::Fire => 0.16,
         Place::Perch => 1.0,
@@ -50,9 +55,22 @@ pub fn position_along(previous: Place, block_place: Place, doing: Doing, progres
         // it. That beat is the whole difference between going inside and being
         // deleted — Stardew sells the same transition with four frames of door
         // and a cut, and the hold is what makes the cut read as a decision.
-        return from + (to - from) * ease((progress / ARRIVAL).min(1.0));
+        return from + (to - from) * ease((progress / arrival_for(previous, block_place)).min(1.0));
     }
     place_position(block_place)
+}
+
+/// How far through a walk block he arrives, for this particular walk.
+///
+/// **A constant pace.** Every walk block is the same twelve seconds, and he
+/// used to spend [`ARRIVAL`] of it walking whatever the distance — so a step
+/// from the door to the doorstep took nine and a half seconds of striding in
+/// place. The longest walk, hut to perch, keeps `ARRIVAL`; shorter ones arrive
+/// in proportion to their length and he stands for the rest of the block.
+/// Floored so even the shortest walk is a couple of real steps.
+pub fn arrival_for(from: Place, to: Place) -> f64 {
+    let distance = (place_position(to) - place_position(from)).abs();
+    ARRIVAL * distance.clamp(0.12, 1.0)
 }
 
 /// The last stretch of the build, spent walking to wherever his day has him.
@@ -79,8 +97,11 @@ pub fn door_openness(doing: Doing, place: Place, previous: Place, progress: f64)
         return 0.0;
     }
     if place == Place::Hut {
-        // Arriving: it opens during the beat.
-        return ease(((progress - ARRIVAL) / (1.0 - ARRIVAL)).clamp(0.0, 1.0));
+        // Arriving: it opens as he reaches it, over the same length of beat
+        // whatever the walk — not at a fixed point in the block, which on a
+        // short walk left him waiting at a shut door.
+        let arrived = arrival_for(previous, place);
+        return ease(((progress - arrived) / (1.0 - ARRIVAL)).clamp(0.0, 1.0));
     }
     if previous == Place::Hut {
         // Leaving: open as he steps out, shut behind him.
@@ -858,10 +879,17 @@ pub fn paint(ink: &mut impl Ink, scene: &Scene) {
     } else {
         progress
     };
-    let mut pose = breathe(
-        pose_for(doing, walk_progress, phase),
-        secondary(seconds, doing),
-    );
+    // Once a walk has delivered him he stands, rather than striding on the
+    // spot for the rest of the block.
+    let arrived = !building
+        && doing == Doing::Walking
+        && progress >= arrival_for(came_from, block_place);
+    let stance = if arrived {
+        STANDING
+    } else {
+        pose_for(doing, walk_progress, phase)
+    };
+    let mut pose = breathe(stance, secondary(seconds, doing));
     pose.hat_tilt += head_drift(seconds);
 
     // Indoors he is a shape behind glass and nothing else — see
@@ -2011,6 +2039,18 @@ mod tests {
     /// At `HANDOVER` the lookback used to clamp into the handover walk at
     /// progress 0, stillness faced right, and the last outbound step was
     /// still landing leftward.
+    /// **A constant pace.** The long walk keeps its time and the short ones
+    /// take proportionally less, so a step to the doorstep is a step, not
+    /// nine seconds of striding on the spot.
+    #[test]
+    fn a_short_walk_is_over_quickly_and_a_long_one_takes_its_time() {
+        let to_perch = arrival_for(Place::Hut, Place::Perch);
+        let to_doorstep = arrival_for(Place::Hut, Place::Doorstep);
+        assert!((to_perch - ARRIVAL).abs() < 1e-9);
+        assert!(to_doorstep < to_perch * 0.2, "{to_doorstep} vs {to_perch}");
+        assert!(to_doorstep > 0.0);
+    }
+
     #[test]
     fn handover_keeps_the_last_outbound_facing_until_he_turns() {
         let face = face_for(Place::Perch, Place::Perch, Doing::Fishing, 0.5, HANDOVER);
@@ -2035,12 +2075,16 @@ mod tests {
             )
         };
 
-        // He is still moving early on, and the door is shut.
-        let (early, shut) = arriving(0.4);
+        // Walks keep a constant pace, so when he arrives depends on how far
+        // he came; the beat follows the arrival, not a fixed point in the block.
+        let arrival = arrival_for(Place::Garden, Place::Hut);
+
+        // He is still moving halfway there, and the door is shut.
+        let (early, shut) = arriving(arrival * 0.5);
         assert_eq!(shut, 0.0, "the door opened while he was still crossing");
 
         // He has arrived by the time the beat starts, and stays put through it.
-        let (at_door, _) = arriving(ARRIVAL);
+        let (at_door, _) = arriving(arrival);
         let (still_there, _) = arriving(1.0);
         assert!(at_door < early, "he should have moved toward the hut");
         assert!(
@@ -2049,7 +2093,10 @@ mod tests {
         );
 
         // And the door opens during it.
-        assert!(arriving(0.9).1 > 0.0, "the door never opened");
+        assert!(
+            arriving(arrival + (1.0 - ARRIVAL) * 0.5).1 > 0.0,
+            "the door never opened"
+        );
         assert!(
             arriving(1.0).1 > 0.9,
             "the door was still shut when he went in"
