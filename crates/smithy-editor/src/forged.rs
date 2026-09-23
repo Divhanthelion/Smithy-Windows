@@ -12,7 +12,7 @@
 //! of the photographic grain a texture would give.
 
 use floem::peniko::kurbo::{
-    BezPath, Circle, CubicBez, ParamCurve, ParamCurveDeriv, Point, Rect, Stroke,
+    BezPath, Circle, CubicBez, Ellipse, ParamCurve, ParamCurveDeriv, Point, Rect, Stroke,
 };
 use floem::peniko::{Brush, Color, ColorStop, Gradient};
 use floem::prelude::*;
@@ -151,6 +151,13 @@ pub fn forged_frame(aesthetic: RwSignal<Aesthetic>, tick: RwSignal<u64>) -> impl
         }
 
         draw_moulding(cx, w, h);
+        // The plain members get their own quiet ornament, one kind each, so
+        // the frame reads as worked metal everywhere rather than as bare
+        // steel with a vine laid on it: rivets on the fillet, a twisted rope
+        // on the ovolo, pearls on the inner bead.
+        draw_rivets(cx, w, h);
+        draw_rope(cx, w, h);
+        draw_beading(cx, w, h);
 
         // The sun, riding the top rail with the day. Painted before any
         // ornament so the vines, the corner stones, and the wordmark all crop
@@ -169,20 +176,24 @@ pub fn forged_frame(aesthetic: RwSignal<Aesthetic>, tick: RwSignal<u64>) -> impl
         // corners so the volutes there have room to spring — except the bottom
         // rail, which is the fisherman's stage. Two ornaments on one member is
         // one too many, and he is the one anybody came to see.
-        draw_vine(
-            cx,
-            Point::new(side_mid, top_mid + pad),
-            Point::new(side_mid, h - side_mid - pad),
-            side_band,
-            1,
-        );
-        draw_vine(
-            cx,
-            Point::new(w - side_mid, top_mid + pad),
-            Point::new(w - side_mid, h - side_mid - pad),
-            side_band,
-            1,
-        );
+        //
+        // Each side rail's vine is two runs growing out of a medallion at
+        // the rail's middle, so a long rail has a centre to be read from
+        // rather than one undifferentiated stretch.
+        let (run_top, run_bottom) = (top_mid + pad, h - side_mid - pad);
+        let middle = (run_top + run_bottom) / 2.0;
+        let clearance = FRAME_INSET as f64 * 0.55;
+        for x in [side_mid, w - side_mid] {
+            if run_bottom - run_top > clearance * 2.0 + 120.0 {
+                // Grown *out of* the medallion: the leaves rake toward the
+                // run's end, so the growth reads from the centre outward.
+                draw_vine(cx, Point::new(x, middle - clearance), Point::new(x, run_top), side_band, 1);
+                draw_vine(cx, Point::new(x, middle + clearance), Point::new(x, run_bottom), side_band, 0);
+                draw_medallion(cx, Point::new(x, middle));
+            } else {
+                draw_vine(cx, Point::new(x, run_top), Point::new(x, run_bottom), side_band, 1);
+            }
+        }
 
         for corner in 0..4 {
             draw_corner(cx, w, h, corner);
@@ -465,6 +476,170 @@ fn draw_moulding(cx: &mut floem::context::PaintCx, w: f64, h: f64) {
         let rim = member_quad(w, h, side, 0.175, 0.21);
         cx.fill(&rim, shade(STEEL_RIM, k * 0.8), 0.0);
     }
+}
+
+// --- The plain members' ornament --------------------------------------------
+
+/// A member's centre line on one side, as a start and end point, stopping
+/// `margin` short of each corner so nothing runs into the corner stone.
+///
+/// Also returns the unit normal pointing from the frame's outer edge toward
+/// the opening, and the member's depth in pixels — which differs between the
+/// top rail and the others.
+fn rail_line(w: f64, h: f64, side: Side, t: f64, margin: f64) -> (Point, Point, (f64, f64), f64) {
+    let (top, sidew) = (HEADER_HEIGHT as f64, FRAME_INSET as f64);
+    match side {
+        Side::Top => (
+            Point::new(t * sidew + margin, t * top),
+            Point::new(w - t * sidew - margin, t * top),
+            (0.0, 1.0),
+            top,
+        ),
+        Side::Bottom => (
+            Point::new(t * sidew + margin, h - t * sidew),
+            Point::new(w - t * sidew - margin, h - t * sidew),
+            (0.0, -1.0),
+            sidew,
+        ),
+        Side::Left => (
+            Point::new(t * sidew, t * top + margin),
+            Point::new(t * sidew, h - t * sidew - margin),
+            (1.0, 0.0),
+            sidew,
+        ),
+        Side::Right => (
+            Point::new(w - t * sidew, t * top + margin),
+            Point::new(w - t * sidew, h - t * sidew - margin),
+            (-1.0, 0.0),
+            sidew,
+        ),
+    }
+}
+
+/// Evenly spaced stations along a line, about `spacing` apart, ends included.
+fn stations(from: Point, to: Point, spacing: f64) -> Vec<Point> {
+    let len = from.distance(to);
+    if len < spacing {
+        return Vec::new();
+    }
+    let n = (len / spacing).round().max(1.0) as usize;
+    (0..=n)
+        .map(|i| from.lerp(to, i as f64 / n as f64))
+        .collect()
+}
+
+/// Rivets along the outer fillet: the frame is built, not moulded.
+///
+/// Along the bottom they sit on the line the fisherman walks, which is right:
+/// his rail is the riveted beam, and he walks along it.
+fn draw_rivets(cx: &mut floem::context::PaintCx, w: f64, h: f64) {
+    for side in [Side::Top, Side::Right, Side::Bottom, Side::Left] {
+        let k = side_light(side);
+        let (from, to, _, depth) = rail_line(w, h, side, 0.075, FRAME_INSET as f64 * 1.2);
+        let r = (depth * 0.15 * 0.26).max(1.2);
+        for at in stations(from, to, FRAME_INSET as f64 * 1.4) {
+            cx.fill(&Circle::new(at, r + 0.6), shade(STEEL_VOID, k), 0.0);
+            cx.fill(&Circle::new(at, r), shade(STEEL_FACE, k), 0.0);
+            cx.fill(
+                &Circle::new(Point::new(at.x - r * 0.3, at.y - r * 0.3), r * 0.45),
+                shade(STEEL_SPEC, k * 0.9),
+                0.0,
+            );
+        }
+    }
+}
+
+/// A twisted rope along the ovolo, on every rail but the bottom — the
+/// fisherman's, which stays plain so he stands out against it.
+///
+/// A cable moulding is a row of slanted lenses, each one a strand seen as it
+/// turns toward you, packed so each overlaps the next and a dark line of
+/// inlay separates them. That overlap is the whole of the twist.
+///
+/// **One path per strand.** The first version laid every strand into a single
+/// path per rail, a few hundred subpaths long, and the renderer drew it in
+/// patches — runs of strands with bare steel between.
+fn draw_rope(cx: &mut floem::context::PaintCx, w: f64, h: f64) {
+    for side in [Side::Top, Side::Right, Side::Left] {
+        let k = side_light(side);
+        let (from, to, n, depth) = rail_line(w, h, side, 0.275, FRAME_INSET as f64 * 1.2);
+        let half = depth * 0.125 * 0.80;
+        let len = from.distance(to);
+        if len < 40.0 {
+            continue;
+        }
+        let along = ((to.x - from.x) / len, (to.y - from.y) / len);
+        // The strand's long axis: along the rail and across it, at about 55°.
+        let slant = (
+            along.0 * 0.57 + n.0 * 0.82,
+            along.1 * 0.57 + n.1 * 0.82,
+        );
+        let angle = slant.1.atan2(slant.0);
+        let pitch = half * 0.95;
+        let count = (len / pitch).floor() as usize;
+        for i in 0..count {
+            let d = (i as f64 + 0.5) * pitch;
+            let centre = Point::new(from.x + along.0 * d, from.y + along.1 * d);
+            let strand = Ellipse::new(centre, (half * 1.22, pitch * 0.62), angle);
+            cx.fill(&strand, shade(INLAY_DEEP, k), 0.0);
+            let lit = Ellipse::new(
+                Point::new(centre.x - n.0 * half * 0.12, centre.y - n.1 * half * 0.12),
+                (half * 1.0, pitch * 0.42),
+                angle,
+            );
+            cx.fill(&lit, shade(INLAY_MID, k), 0.0);
+            let glint = Ellipse::new(
+                Point::new(centre.x - n.0 * half * 0.35, centre.y - n.1 * half * 0.35),
+                (half * 0.45, pitch * 0.14),
+                angle,
+            );
+            cx.fill(&glint, shade(INLAY_LIT, k).with_alpha(0.8), 0.0);
+        }
+    }
+}
+
+/// Pearls along the inner bead, all the way round: the last thing before the
+/// opening, so the work is framed by a string of light.
+fn draw_beading(cx: &mut floem::context::PaintCx, w: f64, h: f64) {
+    for side in [Side::Top, Side::Right, Side::Bottom, Side::Left] {
+        let k = side_light(side);
+        let (from, to, _, depth) = rail_line(w, h, side, 0.95, 0.0);
+        let r = (depth * 0.10 * 0.36).max(1.0);
+        for at in stations(from, to, r * 3.1) {
+            cx.fill(&Circle::new(at, r), shade(INLAY_DEEP, k), 0.0);
+            cx.fill(
+                &Circle::new(Point::new(at.x - r * 0.12, at.y - r * 0.12), r * 0.78),
+                shade(INLAY_MID, k),
+                0.0,
+            );
+            cx.fill(
+                &Circle::new(Point::new(at.x - r * 0.3, at.y - r * 0.3), r * 0.32),
+                shade(INLAY_LIT, k),
+                0.0,
+            );
+        }
+    }
+}
+
+/// The medallion at a side rail's middle: a quatrefoil of inlay around a
+/// green stone, with a curl springing along the rail either way toward the
+/// vines that grow out of it.
+fn draw_medallion(cx: &mut floem::context::PaintCx, c: Point) {
+    let r = FRAME_INSET as f64 * 0.12;
+    for (dx, dy) in [(0.0, -1.0), (0.0, 1.0)] {
+        let from = Point::new(c.x + dx * r * 2.2, c.y + dy * r * 2.2);
+        let curl = springing_spiral(from, (dx, dy), r * 0.9, VOLUTE_DECAY, std::f64::consts::TAU * 0.7 * dy);
+        inlay(cx, &curl, VOLUTE_INLAY * 0.8);
+    }
+    // Four lobes, then the stone set over their meeting.
+    for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+        let lobe = Circle::new(Point::new(c.x + dx * r * 0.95, c.y + dy * r * 0.95), r * 0.95);
+        cx.fill(&lobe, INLAY_DEEP, 0.0);
+        cx.stroke(&lobe, INLAY_MID, &Stroke::new(1.2));
+    }
+    cx.fill(&Circle::new(c, r * 1.05 + GEM_BEZEL), INLAY_DEEP, 0.0);
+    cx.fill(&Circle::new(c, r * 1.05 + GEM_BEZEL * 0.5), INLAY_MID, 0.0);
+    cabochon(cx, c, r * 1.05, LEAF_DEEP, LEAF_BODY, LEAF_LIT);
 }
 
 /// A lanceolate leaf, as two mirrored curves from base to tip.
@@ -780,6 +955,27 @@ fn frame_on(arc: &CubicBez, t: f64) -> (Point, (f64, f64)) {
 /// structural event.
 fn draw_corner(cx: &mut floem::context::PaintCx, w: f64, h: f64, corner: usize) {
     let (eye, sx, sy) = corner_anchor(w, h, corner);
+
+    // An acanthus fan opening from the stone toward the corner of the work,
+    // with one small leaf turned back toward the window's corner — the stone
+    // is where four growths meet, not a bead stuck on a mitre. Drawn first so
+    // the bezel covers their bases.
+    let diagonal = std::f64::consts::FRAC_1_SQRT_2;
+    let inward = (sx * diagonal, sy * diagonal);
+    let rotate = |(x, y): (f64, f64), a: f64| (x * a.cos() - y * a.sin(), x * a.sin() + y * a.cos());
+    let fan = FRAME_INSET as f64;
+    for (dir, len, width) in [
+        (inward, fan * 0.42, fan * 0.16),
+        (rotate(inward, 0.62), fan * 0.30, fan * 0.12),
+        (rotate(inward, -0.62), fan * 0.30, fan * 0.12),
+        ((-inward.0, -inward.1), fan * 0.20, fan * 0.10),
+    ] {
+        let base = Point::new(eye.x + dir.0 * CORNER_GEM_R, eye.y + dir.1 * CORNER_GEM_R);
+        let blade = leaf(base, dir, CORNER_GEM_OUTER * 0.4 + len, width);
+        cx.fill(&blade, INLAY_DEEP, 0.0);
+        cx.stroke(&blade, INLAY_MID, &Stroke::new(1.1));
+        cx.stroke(&blade, INLAY_LIT.with_alpha(0.6), &Stroke::new(0.5));
+    }
 
     // Volutes first, stone second: the bezel then covers where they spring
     // from, which is what roots them to it rather than leaving them abutting.

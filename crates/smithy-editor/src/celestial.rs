@@ -38,6 +38,8 @@ const DAY: Color = Color::from_rgb8(19, 27, 42);
 const SUN_BODY: Color = Color::from_rgb8(214, 158, 74);
 const SUN_CORE: Color = Color::from_rgb8(255, 236, 186);
 const SUN_GLOW: Color = Color::from_rgb8(180, 118, 52);
+/// The boss's dark rim and engraving, the frame's own inlay shadow.
+const SUN_RIM: Color = Color::from_rgb8(96, 64, 22);
 const MOON_BODY: Color = Color::from_rgb8(176, 186, 206);
 const MOON_DARK: Color = Color::from_rgb8(28, 33, 46);
 
@@ -605,22 +607,65 @@ pub fn draw_frame_sun(cx: &mut floem::context::PaintCx, w: f64) {
     let Some((centre, radius)) = frame_sun(w) else {
         return;
     };
-    for (spread, alpha) in [(3.0, 0.05_f32), (2.0, 0.08), (1.4, 0.13)] {
-        cx.fill(
-            &Circle::new(centre, radius * spread),
-            SUN_GLOW.with_alpha(alpha),
-            0.0,
-        );
+    for (path, colour) in frame_sun_marks(centre, radius) {
+        cx.fill(&path, colour, 0.0);
     }
-    cx.fill(&Circle::new(centre, radius), SUN_BODY.with_alpha(0.9), 0.0);
-    cx.fill(
-        &Circle::new(
-            Point::new(centre.x - radius * 0.28, centre.y - radius * 0.30),
-            radius * 0.30,
+}
+
+/// The sun as the frame's metalworkers would make it: a gold boss with
+/// alternating long and short rays, an engraved ring, one glint.
+///
+/// It was a flat amber disc with a pale dot, which read as a ball sitting on
+/// the frame rather than as part of it. The frame's vocabulary is inlay and
+/// set stones; a sunburst is that vocabulary's sun.
+pub fn frame_sun_marks(centre: Point, radius: f64) -> Vec<Mark> {
+    let mut marks = Vec::new();
+    // A low corona, much fainter than before: the rays carry the radiance now.
+    for (spread, alpha) in [(2.2, 0.035_f32), (1.6, 0.06)] {
+        marks.push((disc(centre, radius * spread), SUN_GLOW.with_alpha(alpha)));
+    }
+    // Sixteen rays, long and short alternating, each a slim lance.
+    let rays = 16;
+    let mut long = BezPath::new();
+    let mut short = BezPath::new();
+    for i in 0..rays {
+        let a = i as f64 / rays as f64 * std::f64::consts::TAU;
+        let (reach, path) = if i % 2 == 0 {
+            (1.50, &mut long)
+        } else {
+            (1.25, &mut short)
+        };
+        let half = std::f64::consts::PI / rays as f64 * 0.45;
+        let at = |r: f64, a: f64| Point::new(centre.x + r * a.cos(), centre.y + r * a.sin());
+        path.move_to(at(radius * 0.9, a - half));
+        path.line_to(at(radius * reach, a));
+        path.line_to(at(radius * 0.9, a + half));
+        path.close_path();
+    }
+    marks.push((long, SUN_BODY.with_alpha(0.85)));
+    marks.push((short, SUN_GLOW.with_alpha(0.8)));
+    // The boss: a dark rim, the gold body offset toward the light, and an
+    // engraved ring inside it.
+    marks.push((disc(centre, radius * 1.0), SUN_RIM));
+    marks.push((
+        disc(
+            Point::new(centre.x - radius * 0.05, centre.y - radius * 0.05),
+            radius * 0.9,
         ),
-        SUN_CORE.with_alpha(0.8),
-        0.0,
-    );
+        SUN_BODY,
+    ));
+    let mut ring = BezPath::new();
+    ring.extend(Circle::new(centre, radius * 0.68).path_elements(0.1));
+    ring.extend(Circle::new(centre, radius * 0.60).path_elements(0.1));
+    marks.push((ring, SUN_RIM.with_alpha(0.55)));
+    marks.push((
+        disc(
+            Point::new(centre.x - radius * 0.30, centre.y - radius * 0.32),
+            radius * 0.16,
+        ),
+        SUN_CORE.with_alpha(0.85),
+    ));
+    marks
 }
 
 #[cfg(test)]
