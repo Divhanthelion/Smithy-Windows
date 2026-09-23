@@ -12,7 +12,8 @@ path = "src/lib.rs"
 
 [dependencies]
 # Already in the tree transitively. Used only by `localtime`, for `localtime_r`
-# — the platform's own timezone database, rather than a second copy of it.
+# (`localtime_s` on Windows) — the platform's own timezone database, rather
+# than a second copy of it.
 libc = "0.2"
 smithy-fisherman = { workspace = true }
 smithy-sky = { workspace = true }

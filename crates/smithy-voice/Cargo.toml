@@ -19,7 +19,7 @@ anyhow = { workspace = true }
 cpal = "0.15"
 rubato = "0.14"
 # Embedded inference: the model runs in this process, not behind an API.
-candle-core = { version = "0.9", features = ["accelerate"] }
+candle-core = "0.9"
 candle-nn = "0.9"
 candle-transformers = "0.9"
 hf-hub = "0.4"
@@ -29,3 +29,9 @@ serde_json = { workspace = true }
 crossbeam-channel = "0.5"
 rand = "0.8"
 serde = { workspace = true }
+
+# Accelerate is Apple's BLAS; `accelerate-src` links it as a framework and
+# refuses to build anywhere else. Elsewhere candle falls back to its own CPU
+# kernels, which is slower to decode but needs no system library.
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { version = "0.9", features = ["accelerate"] }

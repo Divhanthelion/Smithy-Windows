@@ -25,6 +25,7 @@
 ///
 /// Zero if the platform will not say — a backdrop is not a reason to fail, and
 /// the consequence of being wrong is that an ornament keeps Greenwich's hours.
+#[cfg(unix)]
 pub fn utc_offset_seconds() -> i64 {
     // SAFETY: `time` accepts a null pointer and returns the current time;
     // `localtime_r` writes into a `tm` we own and borrow exclusively. Both are
@@ -38,6 +39,46 @@ pub fn utc_offset_seconds() -> i64 {
         }
         local.tm_gmtoff as i64
     }
+}
+
+/// The MSVC runtime has no `tm_gmtoff`. It does have `localtime_s`, which
+/// resolves the zone and daylight saving the same way, so the offset is the
+/// local wall-clock fields read back *as if* they were UTC, minus the instant.
+#[cfg(windows)]
+pub fn utc_offset_seconds() -> i64 {
+    // SAFETY: `time` accepts a null pointer and returns the current time;
+    // `localtime_s` writes into a `tm` we own and borrow exclusively, and
+    // reports failure through its return value rather than a null pointer.
+    unsafe {
+        let now = libc::time(std::ptr::null_mut());
+        let mut local: libc::tm = std::mem::zeroed();
+        if libc::localtime_s(&mut local, &now) != 0 {
+            return 0;
+        }
+        let days = days_from_civil(
+            i64::from(local.tm_year) + 1900,
+            i64::from(local.tm_mon) + 1,
+            i64::from(local.tm_mday),
+        );
+        let wall = days * 86_400
+            + i64::from(local.tm_hour) * 3600
+            + i64::from(local.tm_min) * 60
+            + i64::from(local.tm_sec);
+        wall - now as i64
+    }
+}
+
+/// Days since 1970-01-01 for a proleptic Gregorian date — Howard Hinnant's
+/// `days_from_civil`, which is exact for every date a clock will show.
+#[cfg(windows)]
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 /// Hours east of UTC right now.
