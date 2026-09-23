@@ -98,16 +98,27 @@ impl Hotkey {
     ///
     /// Every glyph here is one Menlo carries — see `design::glyph`, and the
     /// test that scans for anything that would render as a box.
+    ///
+    /// Glyphs on macOS, where they are the convention; words elsewhere, where
+    /// `⌘⇧V` names a key nobody's keyboard has.
     pub fn describe(&self) -> String {
         let mut out = String::new();
-        if self.cmd {
-            out.push('⌘');
-        }
-        if self.shift {
-            out.push('⇧');
-        }
-        if self.alt {
-            out.push('⌥');
+        if cfg!(target_os = "macos") {
+            if self.cmd {
+                out.push('⌘');
+            }
+            if self.shift {
+                out.push('⇧');
+            }
+            if self.alt {
+                out.push('⌥');
+            }
+        } else {
+            for (held, word) in [(self.cmd, "Ctrl+"), (self.shift, "Shift+"), (self.alt, "Alt+")] {
+                if held {
+                    out.push_str(word);
+                }
+            }
         }
         out.push_str(&self.key.to_uppercase());
         out
@@ -233,7 +244,11 @@ mod tests {
     #[test]
     fn the_written_form_uses_only_glyphs_the_font_has() {
         let described = Hotkey::default().describe();
-        assert_eq!(described, "⌘⇧V");
+        if cfg!(target_os = "macos") {
+            assert_eq!(described, "⌘⇧V");
+        } else {
+            assert_eq!(described, "Ctrl+Shift+V");
+        }
         let everything = Hotkey {
             key: "z".into(),
             cmd: true,

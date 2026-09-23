@@ -579,14 +579,14 @@ fn header(
 ) -> impl IntoView {
     Stack::horizontal((
         Label::derived(|| "Agent".to_string()).style(|s| {
-            nowrap(s)
+            chrome(s)
                 .color(catppuccin::TEXT)
                 .font_size(13.0)
                 .font_bold()
                 .margin_right(8.0)
         }),
         Label::derived(move || state.session_kind.get()).style(|s| {
-            nowrap(s)
+            chrome(s)
                 .color(catppuccin::LAVENDER)
                 .font_size(11.0)
                 .margin_right(8.0)
@@ -632,7 +632,10 @@ fn header(
         // Worth showing: a silently-degraded context (say, layout only because
         // `cargo metadata` failed) explains otherwise baffling answers.
         Label::derived(move || state.context_label.get()).style(move |s| {
+            // Gives way first: it is the least important thing on the row.
             nowrap(s)
+                .min_width(0.0)
+                .flex_shrink(2.0)
                 .color(catppuccin::SURFACE2)
                 .font_size(10.0)
                 .margin_right(8.0)
@@ -666,7 +669,8 @@ fn header(
         })
         .style(move |s| {
             let on = state.auto_approve.get();
-            s.font_family(crate::design::SYMBOL.to_string())
+            chrome(s)
+                .font_family(crate::design::SYMBOL.to_string())
                 .font_size(10.0)
                 .margin_right(6.0)
                 .padding_horiz(6.0)
@@ -685,7 +689,7 @@ fn header(
                 on_clear_context()
             })
             .style(move |s| {
-                nowrap(s)
+                chrome(s)
                     .color(catppuccin::OVERLAY1)
                     .font_size(11.0)
                     .margin_right(4.0)
@@ -736,6 +740,18 @@ fn nowrap(s: floem::style::Style) -> floem::style::Style {
     ))
 }
 
+/// Chrome that must be read whole: a title, a toggle, a button.
+///
+/// [`nowrap`] alone is not enough, because every item in a row shrinks by
+/// default and they shrink together — so on a narrow panel "Agent" and
+/// "Coding" were clipped to "A…" and "C…" just as readily as the long model
+/// name beside them, and the YOLO toggle and the Send button, which had no
+/// `nowrap` at all, broke into "YOL / O" and "Sen / d". These keep their
+/// width; the model name and the context readout give way instead.
+fn chrome(s: floem::style::Style) -> floem::style::Style {
+    nowrap(s).flex_shrink(0.0)
+}
+
 fn icon_button(
     glyph: &'static str,
     tip: &'static str,
@@ -744,7 +760,8 @@ fn icon_button(
     Label::derived(move || glyph.to_string())
         .on_event_stop(floem::event::listener::Click, move |_, _| on_click())
         .style(|s| {
-            s.color(catppuccin::OVERLAY1)
+            chrome(s)
+                .color(catppuccin::OVERLAY1)
                 .font_family(crate::design::SYMBOL.to_string())
                 .font_size(12.0)
                 .padding_horiz(6.0)
@@ -2166,7 +2183,8 @@ fn microphone(
             // the shortcut rendered as two boxes and a V. The glyph guard
             // cannot catch this: the characters were right, the font was never
             // asked for.
-            s.font_family(crate::design::SYMBOL.to_string())
+            chrome(s)
+                .font_family(crate::design::SYMBOL.to_string())
                 .font_size(9.0)
                 .margin_right(8.0)
                 .color(match state.voice.get() {
@@ -2420,7 +2438,10 @@ fn composer(
                 }
             })
             .style(move |s| {
-                s.font_size(10.0).color(if state.busy.get() {
+                nowrap(s)
+                    .min_width(0.0)
+                    .font_size(10.0)
+                    .color(if state.busy.get() {
                     catppuccin::YELLOW
                 } else {
                     catppuccin::SURFACE2
@@ -2438,7 +2459,8 @@ fn composer(
                             Button::new("Stop")
                                 .on_event_stop(floem::event::listener::Click, move |_, _| on_stop())
                                 .style(|s| {
-                                    s.background(catppuccin::SURFACE0)
+                                    chrome(s)
+                                        .background(catppuccin::SURFACE0)
                                         .color(catppuccin::RED)
                                         .font_size(12.0)
                                         .padding_horiz(14.0)
@@ -2453,7 +2475,8 @@ fn composer(
                             Button::new("Send")
                                 .on_event_stop(floem::event::listener::Click, move |_, _| send())
                                 .style(|s| {
-                                    s.background(catppuccin::LAVENDER)
+                                    chrome(s)
+                                        .background(catppuccin::LAVENDER)
                                         .color(catppuccin::CRUST)
                                         .font_size(12.0)
                                         .font_bold()
