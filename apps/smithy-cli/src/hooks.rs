@@ -14,6 +14,8 @@ use smithy_tools::{yolo_skips_bash, yolo_skips_write, HookDecision, ToolCall, To
 
 pub struct ShellApprovalHook {
     pub auto_approve: Arc<AtomicBool>,
+    /// A second opinion on commands YOLO would run unasked. Adds prompts only.
+    pub jev: Option<Arc<smithy_agent::jev::Jev>>,
 }
 
 #[async_trait]
@@ -32,14 +34,17 @@ impl ToolHook for ShellApprovalHook {
             .unwrap_or_default()
             .to_string();
 
-        if self.auto_approve.load(Ordering::Relaxed)
-            && yolo_skips_bash(&command, ctx.workspace.root())
-        {
-            return HookDecision::Allow;
+        let root = ctx.workspace.root();
+        let mut note = String::new();
+        if self.auto_approve.load(Ordering::Relaxed) && yolo_skips_bash(&command, root) {
+            match smithy_agent::jev::flags_shell(self.jev.as_deref(), &command, root).await {
+                Some(why) => note = format!("{why}\n"),
+                None => return HookDecision::Allow,
+            }
         }
 
         let _hold = ctx.gate.hold();
-        let prompt = format!("run this command?\n  {command}\n[y]es  [n]o  ");
+        let prompt = format!("{note}run this command?\n  {command}\n[y]es  [n]o  ");
         match ask(&prompt) {
             Answer::Yes => HookDecision::Allow,
             Answer::No | Answer::Eof => HookDecision::Deny(

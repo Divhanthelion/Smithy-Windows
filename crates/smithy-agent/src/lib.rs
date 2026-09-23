@@ -47,6 +47,7 @@ pub mod catalogue;
 pub mod config;
 pub mod explore;
 pub mod harness;
+pub mod jev;
 pub mod limits;
 pub mod mcp;
 pub mod message;

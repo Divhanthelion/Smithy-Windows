@@ -1467,13 +1467,17 @@ fn shell_approval_modal(
         move |req| {
             if let Some(req) = req {
                 let command = req.command.clone();
+                let title = match &req.note {
+                    Some(note) => format!("Run shell command?  {note}"),
+                    None => "Run shell command?".to_string(),
+                };
                 let req_deny = req.clone();
                 let req_allow = req;
                 let advance_deny = advance.clone();
                 let advance_allow = advance.clone();
                 Box::new(
                     Stack::vertical((
-                        Label::derived(|| "Run shell command?".to_string()).style(|s| {
+                        Label::derived(move || title.clone()).style(|s| {
                             s.color(Color::WHITE)
                                 .font_size(16.0)
                                 .font_bold()

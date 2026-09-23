@@ -38,9 +38,14 @@ use crate::app_state::{AgentUiEvent, ReviewOutcome, ShellApprovalRequest};
 /// without a prompt. Anything that names a path up out of the Project, or over
 /// into a sibling, still asks. `edit` / `write` cannot leave the Workspace;
 /// `bash` can, which is why this gate still exists with YOLO on.
+///
+/// With a Jev key, a command YOLO would wave through is shown to Jev first, and
+/// asked about if Jev thinks it deserves a look. Jev can add a prompt, never
+/// remove one — see [`smithy_agent::jev`].
 pub struct ShellApprovalHook {
     pub tx: Sender<ShellApprovalRequest>,
     pub auto_approve: Arc<AtomicBool>,
+    pub jev: Option<Arc<smithy_agent::jev::Jev>>,
 }
 
 #[async_trait]
@@ -59,15 +64,19 @@ impl ToolHook for ShellApprovalHook {
             .unwrap_or_default()
             .to_string();
 
-        if self.auto_approve.load(Ordering::Relaxed)
-            && yolo_skips_bash(&command, ctx.workspace.root())
-        {
-            return HookDecision::Allow;
+        let root = ctx.workspace.root();
+        let mut note = None;
+        if self.auto_approve.load(Ordering::Relaxed) && yolo_skips_bash(&command, root) {
+            note = smithy_agent::jev::flags_shell(self.jev.as_deref(), &command, root).await;
+            if note.is_none() {
+                return HookDecision::Allow;
+            }
         }
 
         let (otx, orx) = tokio::sync::oneshot::channel();
         let request = ShellApprovalRequest {
             command: command.clone(),
+            note,
             responder: Arc::new(Mutex::new(Some(otx))),
         };
         if self.tx.send(request).is_err() {
@@ -651,6 +660,7 @@ fn install_session_hooks(
         registry.add_hook(Box::new(ShellApprovalHook {
             tx: shell_approval,
             auto_approve: review.auto_approve,
+            jev: smithy_agent::jev::Jev::from_store().map(Arc::new),
         }));
     }
     if has_mcp {
@@ -1523,6 +1533,7 @@ mod hook_tests {
         ShellApprovalHook {
             tx,
             auto_approve: Arc::new(AtomicBool::new(yolo)),
+            jev: None,
         }
     }
     fn answer_with(

@@ -33,6 +33,9 @@ use crate::runtime::tokio_runtime;
 #[derive(Clone)]
 pub struct ShellApprovalRequest {
     pub command: String,
+    /// Why YOLO asked about a command it would otherwise have run: Jev's
+    /// verdict. `None` for the ordinary prompt.
+    pub note: Option<String>,
     pub responder: Arc<Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>,
 }
 

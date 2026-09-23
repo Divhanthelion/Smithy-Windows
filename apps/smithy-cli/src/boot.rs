@@ -123,6 +123,7 @@ pub async fn boot(project: &Project, yolo: bool, skill: Option<Skill>) -> Result
     if has_bash {
         registry.add_hook(Box::new(ShellApprovalHook {
             auto_approve: auto_approve.clone(),
+            jev: smithy_agent::jev::Jev::from_store().map(std::sync::Arc::new),
         }));
     }
     if has_mcp {
