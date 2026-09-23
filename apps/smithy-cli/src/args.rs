@@ -16,8 +16,9 @@ smithy-agent — a Session in the terminal. Same loop as the editor.
 
   smithy-agent [PROJECT]         REPL in this Project (cwd if omitted)
   smithy-agent -m TEXT [PROJECT] one Turn, then exit
-  smithy-agent --yolo …          skip Review for in-Project writes; bash that
-                                 stays down in the tree skips the prompt
+  smithy-agent --reviewed …      review every write and approve every command.
+                                 The default is YOLO: in-Project writes land,
+                                 bash that stays down in the tree runs unasked
   smithy-agent --init-harness    copy the shipped system prompt into
                                  .smithy/harness/SYSTEM.md so you can edit it
   smithy-agent --which-harness   print which SYSTEM.md this Project would load
@@ -32,7 +33,7 @@ it. Editing the Harness mid-Session does not hot-reload — /new to pick it up.
 
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut project = None;
-    let mut yolo = false;
+    let mut yolo = true;
     let mut message = None;
     let mut init_harness = false;
     let mut which_harness = false;
@@ -41,7 +42,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "-h" | "--help" => return Err(usage().trim_end().to_string()),
+            // `--yolo` is the default now; still accepted so old habits work.
             "--yolo" => yolo = true,
+            "--reviewed" => yolo = false,
             "--init-harness" => init_harness = true,
             "--which-harness" => which_harness = true,
             "-m" | "--message" => {
@@ -86,8 +89,13 @@ mod tests {
     fn cwd_is_the_default_project() {
         let a = parse(args("")).unwrap();
         assert_eq!(a.project, PathBuf::from("."));
-        assert!(!a.yolo);
+        assert!(a.yolo, "YOLO is the default");
         assert!(a.message.is_none());
+    }
+
+    #[test]
+    fn reviewed_turns_yolo_off() {
+        assert!(!parse(args("--reviewed")).unwrap().yolo);
     }
 
     #[test]

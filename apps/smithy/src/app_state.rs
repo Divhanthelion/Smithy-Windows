@@ -267,7 +267,9 @@ impl ReviewState {
             current: RwSignal::new(None),
             outcomes: Rc::new(RefCell::new(Vec::new())),
             responders: Arc::new(Mutex::new(HashMap::new())),
-            auto_approve: Arc::new(AtomicBool::new(false)),
+            // Matches the panel toggle's default, which the effect mirrors in;
+            // the two must agree before the first frame runs that effect.
+            auto_approve: Arc::new(AtomicBool::new(true)),
         }
     }
 

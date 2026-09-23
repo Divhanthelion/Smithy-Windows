@@ -234,7 +234,9 @@ impl AgentPanelState {
             follow_scroll: RwSignal::new(true),
             attachments: RwSignal::new(Vec::new()),
             drop_active: RwSignal::new(false),
-            auto_approve: RwSignal::new(false),
+            // YOLO by default in this fork: reviewing every edit is the wrong
+            // default for how it is used. Out-of-Project commands still ask.
+            auto_approve: RwSignal::new(true),
             project_root: RwSignal::new(std::path::PathBuf::new()),
         }
     }
