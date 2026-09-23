@@ -19,6 +19,7 @@ futures-util.workspace = true
 thiserror.workspace = true
 keyring.workspace = true
 toml.workspace = true
+sha2.workspace = true
 http = "1"
 rmcp = { version = "3.1.2", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 

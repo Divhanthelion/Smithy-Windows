@@ -24,6 +24,7 @@ use serde_json::Value;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 
 use crate::registry::{Tool, ToolCtx};
+use crate::research::SourceStore;
 use crate::schema::{arg_i64, arg_str, ToolDefinition, ToolOutput, ToolParameter};
 
 /// Ceiling on the text handed back, in characters.
@@ -47,6 +48,9 @@ const USER_AGENT: &str = concat!("Smithy/", env!("CARGO_PKG_VERSION"), " (+agent
 
 pub struct WebFetch {
     http: reqwest::Client,
+    /// Where rendered pages are saved so a quote can be checked later. See
+    /// [`crate::research`]. `None` only when the store has no home.
+    sources: Option<SourceStore>,
 }
 
 impl WebFetch {
@@ -63,7 +67,14 @@ impl WebFetch {
                 .unwrap_or_else(|e| {
                     panic!("web_fetch HTTP client could not be built: {e}");
                 }),
+            sources: SourceStore::default_location(),
         }
+    }
+
+    /// Save pages somewhere else (tests), or nowhere.
+    pub fn with_sources(mut self, sources: Option<SourceStore>) -> Self {
+        self.sources = sources;
+        self
     }
 
     /// Follow at most 5 redirects, validating every hop *before* requesting it.
@@ -136,13 +147,26 @@ impl Tool for WebFetch {
             "Fetch a web page over http/https and return it as plain text. Use this to read \
              documentation, a changelog, an RFC, or any URL you already know. Prefer the \
              canonical source (docs.rs, the project's own docs, the RFC text) over a blog \
-             summarising it. If the page is truncated, fetch a more specific URL rather than \
-             re-fetching the same one.",
+             summarising it. Every page is saved and labelled `source <id>`: cite it as \
+             {src:<id>} with a quote copied exactly from the text, and `cite_check` can then \
+             verify the quote. For a long page, pass `find` to get the passages around a phrase, \
+             or `offset` to continue reading where a truncated page stopped.",
             vec![
                 ToolParameter::string("url", "The absolute http:// or https:// URL.", true),
                 ToolParameter::integer(
                     "max_chars",
                     "Maximum characters to return (default 64000).",
+                    false,
+                ),
+                ToolParameter::string(
+                    "find",
+                    "Return only the passages around each case-insensitive match of this \
+                     phrase, instead of the page from the top.",
+                    false,
+                ),
+                ToolParameter::integer(
+                    "offset",
+                    "Start reading this many characters into the page (after a truncation).",
                     false,
                 ),
             ],
@@ -194,7 +218,20 @@ impl Tool for WebFetch {
                 bytes.len() / (1024 * 1024)
             ));
         }
-        let body = String::from_utf8_lossy(&bytes);
+        let body = if is_pdf(&content_type, &bytes) {
+            match pdf_text(bytes.to_vec()).await {
+                Ok(text) => text,
+                Err(e) => {
+                    return ToolOutput::err(format!(
+                        "`{url}` is a PDF whose text could not be extracted ({e}). Look for an \
+                         HTML version of the same document (arXiv: /html/<id> or /abs/<id>; \
+                         RFCs: rfc-editor.org/rfc/rfcNNNN; many specs publish HTML beside the PDF)."
+                    ))
+                }
+            }
+        } else {
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
 
         let text = if is_html(&content_type, &body) {
             render_html(&body)
@@ -210,8 +247,131 @@ impl Tool for WebFetch {
             ));
         }
 
-        ToolOutput::ok(truncate(&text, max_chars, &current))
+        // Saved whole, before any window is cut, so a quote from anywhere on
+        // the page can be checked — including the part `find` skipped.
+        let label = match &self.sources {
+            Some(store) => {
+                match store.save(&url, &current, status.as_u16(), &content_type, &text) {
+                    Ok(meta) => format!("source {} — cite as {{src:{}}}\n", meta.id, meta.id),
+                    Err(e) => {
+                        format!("(not saved: {e}; quotes from this page cannot be checked)\n")
+                    }
+                }
+            }
+            None => String::new(),
+        };
+
+        let find = arg_str(args, "find")
+            .ok()
+            .map(str::trim)
+            .filter(|f| !f.is_empty());
+        let offset = arg_i64(args, "offset")
+            .map(|n| n.max(0) as usize)
+            .unwrap_or(0);
+        let shown = match find {
+            Some(phrase) => passages(&text, phrase, max_chars),
+            None => window(&text, offset, max_chars),
+        };
+        ToolOutput::ok(format!("Fetched {current}\n{label}\n{shown}"))
     }
+}
+
+/// Papers and standards are often PDF only. Their bytes read as UTF-8 are
+/// noise that looks like text, so they go through an extractor instead.
+fn is_pdf(content_type: &str, bytes: &[u8]) -> bool {
+    content_type.contains("application/pdf") || bytes.starts_with(b"%PDF-")
+}
+
+/// The text layer of a PDF. A scanned PDF has none, and the extractor
+/// panics on some malformed files; both come back as an error.
+async fn pdf_text(bytes: Vec<u8>) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(&bytes))
+            .map_err(|_| "the PDF parser gave up on this file".to_string())?
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("PDF task failed: {e}"))?
+    .and_then(|t| {
+        if t.trim().is_empty() {
+            Err("no text layer (probably scanned images)".into())
+        } else {
+            Ok(t)
+        }
+    })
+}
+
+/// Passages around each match of `phrase`, merged where they overlap.
+fn passages(text: &str, phrase: &str, max_chars: usize) -> String {
+    const AROUND: usize = 700;
+    let chars: Vec<char> = text.chars().collect();
+    let lower: Vec<char> = text.chars().flat_map(char::to_lowercase).collect();
+    // `to_lowercase` can change length for a few scripts; fall back to a
+    // plain search rather than cut at the wrong place.
+    let (hay, same_len) = if lower.len() == chars.len() {
+        (lower, true)
+    } else {
+        (chars.clone(), false)
+    };
+    let needle: Vec<char> = if same_len {
+        phrase.chars().flat_map(char::to_lowercase).collect()
+    } else {
+        phrase.chars().collect()
+    };
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while needle.len() <= hay.len() && i + needle.len() <= hay.len() {
+        if hay[i..i + needle.len()] == needle[..] {
+            let start = i.saturating_sub(AROUND);
+            let end = (i + needle.len() + AROUND).min(chars.len());
+            match spans.last_mut() {
+                Some(last) if start <= last.1 => last.1 = end,
+                _ => spans.push((start, end)),
+            }
+            i += needle.len();
+        } else {
+            i += 1;
+        }
+    }
+    if spans.is_empty() {
+        return format!(
+            "No match for \"{phrase}\" in {} characters. Try a shorter or different phrase.",
+            chars.len()
+        );
+    }
+    let mut out = format!("{} passage(s) matching \"{phrase}\":\n", spans.len());
+    for (start, end) in spans {
+        let piece: String = chars[start..end].iter().collect();
+        out.push_str(&format!("\n--- at character {start} ---\n{piece}\n"));
+        if out.chars().count() > max_chars {
+            out = out.chars().take(max_chars).collect();
+            out.push_str("\n[More matches; narrow the phrase.]");
+            break;
+        }
+    }
+    out
+}
+
+/// `max_chars` of the page from `offset`, saying where it stopped.
+fn window(text: &str, offset: usize, max_chars: usize) -> String {
+    let total = text.chars().count();
+    if offset >= total && total > 0 {
+        return format!("The page is only {total} characters; offset {offset} is past its end.");
+    }
+    let shown: String = text.chars().skip(offset).take(max_chars).collect();
+    let end = offset + shown.chars().count();
+    let mut out = String::new();
+    if offset > 0 {
+        out.push_str(&format!("[From character {offset} of {total}.]\n\n"));
+    }
+    out.push_str(&shown);
+    if end < total {
+        out.push_str(&format!(
+            "\n\n[Truncated at character {end} of {total}. Continue with `offset: {end}`, or pass \
+             `find` to jump to what you are looking for.]"
+        ));
+    }
+    out
 }
 
 /// Refuse anything that is not a public http/https URL.
@@ -436,22 +596,6 @@ fn collapse_blank_lines(text: &str) -> String {
     out
 }
 
-/// Cut to length, saying so.
-///
-/// Naming the URL in the notice matters: after a redirect the model asked for
-/// one page and is reading another, and "fetch a more specific page" is only
-/// actionable if it knows which page it got.
-fn truncate(text: &str, max_chars: usize, final_url: &str) -> String {
-    if text.chars().count() <= max_chars {
-        return format!("Fetched {final_url}\n\n{text}");
-    }
-    let cut: String = text.chars().take(max_chars).collect();
-    format!(
-        "Fetched {final_url}\n\n{cut}\n\n[Truncated at {max_chars} characters. The page continues \
-         — fetch a more specific URL, or raise `max_chars`, rather than re-fetching this one.]"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,20 +688,91 @@ mod tests {
     }
 
     #[test]
-    fn a_short_page_is_returned_whole_with_its_url() {
-        let out = truncate("hello", 100, "https://example.com/");
-        assert!(out.contains("https://example.com/"));
-        assert!(out.ends_with("hello"));
-        assert!(!out.contains("Truncated"));
+    fn a_short_page_is_returned_whole() {
+        let out = window("hello", 0, 100);
+        assert_eq!(out, "hello");
     }
 
     /// Truncation must announce itself — a model that thinks it read the whole
-    /// page will confidently report that something is not in it.
+    /// page will confidently report that something is not in it — and say how
+    /// to read on.
     #[test]
-    fn a_long_page_says_that_it_was_cut() {
-        let out = truncate(&"x".repeat(200), 50, "https://example.com/");
-        assert!(out.contains("Truncated at 50"), "{out}");
-        assert!(out.contains("more specific URL"), "{out}");
+    fn a_long_page_says_that_it_was_cut_and_where_to_continue() {
+        let out = window(&"x".repeat(200), 0, 50);
+        assert!(out.contains("Truncated at character 50 of 200"), "{out}");
+        assert!(out.contains("offset: 50"), "{out}");
+        let rest = window(&format!("{}END", "x".repeat(197)), 150, 50);
+        assert!(rest.starts_with("[From character 150 of 200.]"), "{rest}");
+        assert!(rest.ends_with("END"), "{rest}");
+        assert!(window("abc", 10, 5).contains("past its end"));
+    }
+
+    #[test]
+    fn find_returns_merged_passages_around_matches() {
+        let text = format!(
+            "{}Fraction here.{}fraction again.{}",
+            "a".repeat(2000),
+            "b".repeat(100),
+            "c".repeat(3000)
+        );
+        let out = passages(&text, "FRACTION", 64_000);
+        assert!(
+            out.starts_with("1 passage(s)"),
+            "nearby matches merge: {out}"
+        );
+        assert!(out.contains("Fraction here.") && out.contains("fraction again."));
+        assert!(out.len() < text.len());
+        assert!(passages(&text, "absent", 64_000).starts_with("No match"));
+    }
+
+    /// Against the real network: `cargo test -p smithy-tools live_ -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn live_an_rfc_is_saved_and_searchable_and_a_pdf_reads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SourceStore::new(tmp.path().join("sources"));
+        let fetch = WebFetch::new().with_sources(Some(store.clone()));
+        let ctx = ToolCtx::new(crate::sandbox::Workspace::open(tmp.path()).unwrap());
+
+        let rfc = fetch
+            .run(
+                &serde_json::json!({"url": "https://www.rfc-editor.org/rfc/rfc3339", "find": "dur-second"}),
+                &ctx,
+            )
+            .await;
+        assert!(!rfc.is_error, "{}", rfc.content);
+        assert!(
+            rfc.content.contains("cite as {src:"),
+            "{}",
+            &rfc.content[..300.min(rfc.content.len())]
+        );
+        assert!(
+            rfc.content.contains("passage(s) matching"),
+            "{}",
+            &rfc.content[..500.min(rfc.content.len())]
+        );
+        eprintln!("{}", &rfc.content[..1200.min(rfc.content.len())]);
+
+        let pdf = fetch
+            .run(
+                &serde_json::json!({"url": "https://arxiv.org/pdf/1706.03762", "max_chars": 1500}),
+                &ctx,
+            )
+            .await;
+        assert!(!pdf.is_error, "{}", pdf.content);
+        assert!(
+            pdf.content.to_lowercase().contains("attention"),
+            "{}",
+            pdf.content
+        );
+        eprintln!("{}", pdf.content);
+    }
+
+    #[test]
+    fn a_pdf_is_recognised_by_type_or_by_magic() {
+        assert!(is_pdf("application/pdf", b""));
+        assert!(is_pdf("application/octet-stream", b"%PDF-1.7\n"));
+        assert!(!is_pdf("text/html", b"<html>"));
     }
 
     #[test]

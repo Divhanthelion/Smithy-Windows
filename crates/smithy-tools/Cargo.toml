@@ -18,6 +18,8 @@ regex.workspace = true
 reqwest.workspace = true
 url.workspace = true
 html2text.workspace = true
+sha2.workspace = true
+pdf-extract = "0.12"
 dunce.workspace = true
 
 [target.'cfg(unix)'.dependencies]

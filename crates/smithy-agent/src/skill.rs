@@ -224,23 +224,91 @@ pub fn list_skills(project: &Path) -> Vec<SkillMeta> {
 /// `/grill-me` in every Project that did not ship its own copy. Does not
 /// overwrite a file the user already has.
 pub fn install_bundled_user_skills() {
-    let Some(root) = user_skills_dir() else {
-        return;
-    };
-    for (name, files) in BUNDLED {
-        let dir = root.join(name);
-        if dir.join("SKILL.md").is_file() {
-            continue;
-        }
-        let _ = std::fs::create_dir_all(&dir);
-        for (filename, contents) in *files {
-            let path = dir.join(filename);
-            if !path.is_file() {
-                let _ = std::fs::write(path, contents);
-            }
-        }
+    if let Some(root) = user_skills_dir() {
+        install_bundled_into(&root, BUNDLED, SUPERSEDED);
     }
 }
+
+/// Install shipped files, and upgrade the ones nobody has touched.
+///
+/// Installing once and never again left every user on the first version of a
+/// procedure: the copy in `~/.smithy/skills/` shadows the shipped one. A copy
+/// is replaced only when it is provably unmodified — its hash is the one this
+/// installer recorded in `.bundled`, or a version an earlier release shipped
+/// ([`SUPERSEDED`]). An edited copy is the user's, and stays.
+fn install_bundled_into(
+    root: &Path,
+    bundled: &[(&str, &[(&str, &str)])],
+    superseded: &[(&str, &str, &str)],
+) {
+    for (name, files) in bundled {
+        let dir = root.join(name);
+        if std::fs::create_dir_all(&dir).is_err() {
+            continue;
+        }
+        let manifest_path = dir.join(".bundled");
+        let mut manifest: std::collections::BTreeMap<String, String> =
+            std::fs::read_to_string(&manifest_path)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|l| {
+                    let (f, h) = l.split_once(' ')?;
+                    Some((f.to_string(), h.to_string()))
+                })
+                .collect();
+        for (filename, contents) in *files {
+            let path = dir.join(filename);
+            let shipped = sha256_hex(contents.as_bytes());
+            match std::fs::read(&path) {
+                Err(_) => {
+                    if std::fs::write(&path, contents).is_ok() {
+                        manifest.insert(filename.to_string(), shipped);
+                    }
+                }
+                Ok(current) => {
+                    let have = sha256_hex(&current);
+                    if have == shipped {
+                        manifest.insert(filename.to_string(), shipped);
+                        continue;
+                    }
+                    let untouched = manifest.get(*filename) == Some(&have)
+                        || superseded
+                            .iter()
+                            .any(|(s, f, h)| s == name && f == filename && *h == have);
+                    if untouched && std::fs::write(&path, contents).is_ok() {
+                        manifest.insert(filename.to_string(), shipped);
+                    }
+                }
+            }
+        }
+        let text: String = manifest.iter().map(|(f, h)| format!("{f} {h}\n")).collect();
+        let _ = std::fs::write(manifest_path, text);
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// `(skill, file, sha256)` of shipped files an earlier release installed.
+/// A user copy with one of these hashes was never edited, so it is upgraded.
+const SUPERSEDED: &[(&str, &str, &str)] = &[
+    // Before sources were saved and citations checked (cite_check).
+    (
+        "research",
+        "SKILL.md",
+        "950e05e3dfce1b1a93f389d5199489b76cf2e646fc7e8671cda649cd39d07aea",
+    ),
+    (
+        "pointed-research",
+        "SKILL.md",
+        "6cc506ef341c85e0209339c217adf53b9e16884b03aafa42a6a3311d427be190",
+    ),
+];
 
 fn scan_dir(root: &Path, into: &mut std::collections::BTreeMap<String, SkillMeta>) {
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -458,6 +526,49 @@ fn unquote(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The four cases that matter: nothing there, an untouched copy of this
+    /// release's install, a copy the user edited, and an untouched copy from a
+    /// release before the manifest existed.
+    #[test]
+    fn shipped_skills_upgrade_only_copies_nobody_edited() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let v1: &[(&str, &[(&str, &str)])] = &[("r", &[("SKILL.md", "v1"), ("a.md", "a1")])];
+        let v2: &[(&str, &[(&str, &str)])] = &[("r", &[("SKILL.md", "v2"), ("a.md", "a2")])];
+        let read = |f: &str| std::fs::read_to_string(root.join("r").join(f)).unwrap();
+
+        install_bundled_into(root, v1, &[]);
+        assert_eq!((read("SKILL.md").as_str(), read("a.md").as_str()), ("v1", "a1"));
+
+        std::fs::write(root.join("r/a.md"), "mine").unwrap();
+        install_bundled_into(root, v2, &[]);
+        assert_eq!(read("SKILL.md"), "v2", "untouched: upgraded via the manifest");
+        assert_eq!(read("a.md"), "mine", "edited: left alone");
+
+        // A pre-manifest install: no `.bundled`, content equal to an old release.
+        std::fs::remove_file(root.join("r/.bundled")).unwrap();
+        std::fs::write(root.join("r/SKILL.md"), "v1").unwrap();
+        install_bundled_into(root, v2, &[]);
+        assert_eq!(read("SKILL.md"), "v1", "unknown provenance stays");
+        let v1_hash = sha256_hex(b"v1");
+        let known: &[(&str, &str, &str)] = &[("r", "SKILL.md", &v1_hash)];
+        install_bundled_into(root, v2, known);
+        assert_eq!(read("SKILL.md"), "v2", "a known earlier release is upgraded");
+    }
+
+    #[test]
+    fn the_superseded_research_skills_are_not_the_current_ones() {
+        for (skill, file, hash) in SUPERSEDED {
+            let shipped = BUNDLED
+                .iter()
+                .find(|(n, _)| n == skill)
+                .and_then(|(_, fs)| fs.iter().find(|(f, _)| f == file))
+                .map(|(_, c)| sha256_hex(c.as_bytes()))
+                .unwrap();
+            assert_ne!(&shipped, hash, "{skill}/{file} is listed as superseded but is current");
+        }
+    }
 
     #[test]
     fn a_command_takes_the_name_and_the_rest() {

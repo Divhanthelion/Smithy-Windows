@@ -2,16 +2,20 @@
 name: research
 description: Long adversarial research — pin, snowball, disconfirm, write a cited note. Use only when the user types /research.
 argument-hint: "The question to research"
-tools: [read, write, ls, glob, grep, todo, web_fetch, web_search]
+tools: [read, write, ls, glob, grep, todo, web_fetch, web_search, cite_check, find_notes, explore]
 include: snowball.md, sift.md, ach.md, authority.md
 max-seconds: 7200
 ---
 
 # Research
 
-`web_search`, `web_fetch`, `read`, `ls`, `glob`, `grep`, `todo`, and `write` are generally suited to this task. Search, fetch, and read; then `write` one note. Sequential — one model, not a swarm.
+`find_notes`, `web_search`, `web_fetch`, `read`, `ls`, `glob`, `grep`, `explore`, `todo`, `write`, and `cite_check` are generally suited to this task. Search, fetch, and read; then `write` one note and `cite_check` it. Sequential — one model, not a swarm.
+
+**Before anything else, `find_notes` with the question.** If a Note in `.smithy/research/` already answers it, read that Note and say so instead of researching again; if one answers part of it, pin only the rest.
 
 If they passed arguments, that is the question. If they gave a topic, restate it as a question in one sentence and wait for a yes or a correction. Do not start reading until the question is pinned.
+
+**Unattended:** when the request says this is an unattended Run, the question is already pinned and nobody will answer. Do not wait for a yes: write the Pin in the note and proceed.
 
 Do not write a research agent, a scraper, or a new toolchain. Fetch, read, score, write the note.
 
@@ -86,17 +90,35 @@ When this repo's code disagrees with a paper or docs, report both and say which 
 
 Tag each finding `owner` | `spec` | `empirical` | `opinion`. If a claim cannot be tied to a fetched source, **drop it**. Fluent prose is not evidence. An uncited sentence is a defect.
 
+### Reading long sources
+
+Every `web_fetch` result starts `source <id> — cite as {src:<id>}`. The page is saved whole, so you can quote from any part of it. For a long spec, pass `find: "<phrase>"` to jump to the passages that matter, or `offset` to read on from where a page was cut. PDFs are read as text. Do not re-fetch a page to "check" it — quote it.
+
+### Citing so it can be checked
+
+Each finding is one bullet, and every part of it is checked by `cite_check`:
+
+```
+- [spec] (key) <claim in your words> — <url you fetched> {src:<id>} "<words copied exactly from that page>"
+- [owner] <claim> — {repo:src/parse.rs:42} "<words copied exactly from that file>"
+```
+
+- The quote is copied, not paraphrased: at least four words, `...` to elide. It is matched against the saved page (case, whitespace, and curly quotes do not matter; words do).
+- `{src:<id>}` is the id `web_fetch` printed; the URL is the one you fetched.
+- Mark the load-bearing findings `(key)`. Between them they must rest on at least two domains — two sources that did not copy each other.
+
 ## The note
 
 One Markdown file, through `write` (Review-gated — do not treat it as landed until the tool result says so):
 
-`docs/research/YYYY-MM-DD-<slug>.md`
+`.smithy/research/YYYY-MM-DD-<slug>.md`
 
 ```markdown
 # <pinned question>
 
 **Status:** draft
 **Skill:** research
+**Task:** <plan task id, in an unattended Run; otherwise omit>
 **Pinned question:** <one sentence>
 **Decision this informs:** <one sentence or none>
 **Hypotheses:**
@@ -108,7 +130,7 @@ One Markdown file, through `write` (Review-gated — do not treat it as landed u
 The starting documents and why they qualified.
 
 ## Findings
-Each bullet: kind (`owner` | `spec` | `empirical` | `opinion`), claim, source (path or URL), short quote or precise location.
+One bullet per finding, in the form under "Citing so it can be checked". Nothing else in this section.
 
 ## Disconfirmation
 For each hypothesis: diagnostic evidence against it. Which survive, which are rejected, why. Name the evidence that would flip the ranking if it were wrong (sensitivity).
@@ -131,6 +153,8 @@ What we would have to observe *later* for this ranking to move. Forward-looking.
 
 Before marking done, walk Implication against Findings. Every Implication sentence must be entailed by a tagged finding. No orphan citations. No citations to URLs you did not fetch.
 
+Then run `cite_check` on the note. For every ✗: fix the quote from the saved page, fix the citation, or drop the finding (and anything in Implication that rested on it). Run it again until it says PASS, then set **Status:** to `verified`. If a finding you need cannot pass, keep it out of Findings and say why under Unknowns.
+
 Redact secrets. Do not invent bibliography entries.
 
 ## Done
@@ -143,6 +167,7 @@ The run is done when:
 4. Every finding has a fetched source
 5. Each hypothesis is rejected, survived, or explicitly open — none are silently ignored
 6. The file exists at the path you reported and Review accepted the write
-7. Unknowns, Dropped, and Watch are explicit — a note that pretends to be complete has failed
+7. `cite_check` on it says PASS, and its Status says `verified`
+8. Unknowns, Dropped, and Watch are explicit — a note that pretends to be complete has failed
 
 Tell the user the path and the implication. Do not start implementing unless they ask.

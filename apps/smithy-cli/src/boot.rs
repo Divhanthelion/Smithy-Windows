@@ -193,6 +193,10 @@ fn assemble_registry(
 ) -> Registry {
     let mut registry = Registry::core();
     registry.push(Box::new(smithy_tools::tools::web_fetch::WebFetch::new()));
+    // Research that can be checked: quotes against the pages web_fetch saved,
+    // and earlier Notes found before a question is researched again.
+    registry.push(Box::new(smithy_tools::tools::cite_check::CiteCheck::new()));
+    registry.push(Box::new(smithy_tools::tools::cite_check::FindNotes));
     if brave_configured {
         registry.push(Box::new(brave_search(unbounded_search)));
     }
@@ -237,6 +241,8 @@ fn is_coding_tool(name: &str) -> bool {
             | "web_search"
             | "symbol"
             | "explore"
+            | "cite_check"
+            | "find_notes"
     )
 }
 

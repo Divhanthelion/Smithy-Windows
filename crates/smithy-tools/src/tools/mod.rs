@@ -11,6 +11,7 @@
 //!   gitignore-aware behaviour with nothing to install.
 
 pub mod bash;
+pub mod cite_check;
 pub mod edit;
 pub mod glob;
 pub mod grep;

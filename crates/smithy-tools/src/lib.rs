@@ -23,6 +23,7 @@
 
 pub mod fuzzy;
 pub mod registry;
+pub mod research;
 pub mod sandbox;
 pub mod schema;
 pub mod tools;

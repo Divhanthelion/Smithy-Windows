@@ -557,6 +557,10 @@ fn assemble_registry(
 
     // Reading a URL needs nothing but a network, so it is always available.
     registry.push(Box::new(smithy_tools::tools::web_fetch::WebFetch::new()));
+    // Research that can be checked: quotes against the pages web_fetch saved,
+    // and earlier Notes found before a question is researched again.
+    registry.push(Box::new(smithy_tools::tools::cite_check::CiteCheck::new()));
+    registry.push(Box::new(smithy_tools::tools::cite_check::FindNotes));
 
     // Searching needs a key, and a tool that is present but always fails is
     // worse than one that is absent: the model spends a call finding out. The
@@ -611,6 +615,8 @@ fn is_coding_tool(name: &str) -> bool {
             | "web_search"
             | "symbol"
             | "explore"
+            | "cite_check"
+            | "find_notes"
     )
 }
 

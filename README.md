@@ -311,8 +311,21 @@ Optional frontmatter: `tools` (allowlist; omit for the coding set), `include`
 (sibling files concatenated into the body), `max-seconds`. `tools` and
 `max-seconds` apply only if a Session is rebuilt. MCP tools still attach.
 
-The bundled research skill writes one note at `docs/research/YYYY-MM-DD-<slug>.md`
-through Review. It names search, fetch, read, and write as generally suited.
+Research is meant to be checked, not trusted. Every page `web_fetch` reads —
+HTML, plain text, or a PDF's text layer — is saved by its hash under
+`~/.local/share/smithy/sources/` and labelled `source <id>`; `find` jumps to
+the passages of a long spec that matter and `offset` reads on past a cut. A
+Note's findings cite `{src:<id>}` (or `{repo:path:line}`) with a quote copied
+from the page, and `cite_check` confirms each quote really is on the page it
+names, and that the load-bearing ones rest on two independent domains.
+`find_notes` finds earlier Notes by their question before anything is
+researched again.
+
+The bundled research skill writes one note at `.smithy/research/YYYY-MM-DD-<slug>.md`
+through Review, and is not done until `cite_check` passes. It names search,
+fetch, read, and write as generally suited. An untouched copy of a shipped Skill
+in `~/.smithy/skills/` is upgraded when Smithy ships a new one; a copy you have
+edited is left alone.
 Grill-me interviews as `❓ Qn` and waits; it names `read` / `explore` for facts.
 When you confirm a shared understanding, keep going in this Session or start a
 new one to implement. `/grill-with-docs` is the same interview plus `CONTEXT.md`

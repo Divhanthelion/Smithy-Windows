@@ -121,6 +121,9 @@ keyring = "4.1"
 # something surprising.
 html2text = "0.17"
 
+# Content addresses for saved research sources. Already in the tree.
+sha2 = "0.10"
+
 # Process memory, for the menu-bar meter. Reading another process's RSS is
 # per-platform mach/proc work, and a rust-analyzer sitting on five gigabytes is
 # worth seeing rather than worth hand-rolling.
