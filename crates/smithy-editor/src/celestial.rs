@@ -17,7 +17,7 @@
 //! because a backdrop that quietly brightened over a year of tweaks is exactly
 //! the failure mode.
 
-use floem::peniko::kurbo::{Circle, Point, Rect};
+use floem::peniko::kurbo::{BezPath, Circle, Point, Rect, Shape};
 use floem::peniko::Color;
 use floem::prelude::*;
 use floem::reactive::{Memo, RwSignal, SignalGet};
@@ -226,7 +226,12 @@ pub fn twinkle(hr: u16, radius: f64, phase: f64) -> f32 {
 /// what is above the horizon, not what the eye could pick out — so the fade has
 /// to happen here.
 pub fn star_alpha(magnitude: f32, darkness: f64) -> f32 {
-    let brightness = ((5.0 - magnitude) / 6.5).clamp(0.0, 1.0);
+    // Curved, not linear: with a ceiling only twice the floor, a linear ramp
+    // gave Vega and a fourth-magnitude star nearly the same weight and the
+    // field read as even grey dust. Bending it keeps the floor where it was
+    // and lets the bright few stand out — which is what lets a constellation
+    // be picked out at all.
+    let brightness = ((5.0 - magnitude) / 6.5).clamp(0.0, 1.0).powf(1.8);
     // Squared, so the field *fades out* into daylight rather than merely
     // dimming — at noon the sun is the thing worth looking at, and a sky with
     // both is a sky with neither.
@@ -355,8 +360,60 @@ pub fn sky_backdrop(
     })
 }
 
-fn draw_stars(cx: &mut floem::context::PaintCx, w: f64, h: f64, sky: &SkyState, phase: f64) {
+/// Something to fill: a shape and its colour. The sky is built as these so
+/// the app and the headless `sky` example paint exactly the same marks.
+pub type Mark = (BezPath, Color);
+
+fn disc(centre: Point, radius: f64) -> BezPath {
+    Circle::new(centre, radius).path_elements(0.1).collect()
+}
+
+/// How much glow a star earns beyond its rings, 0 to 1. Only the bright
+/// handful: a glow on every star is a fog.
+pub fn star_glow(magnitude: f32) -> f32 {
+    ((2.5 - magnitude) / 4.0).clamp(0.0, 1.0)
+}
+
+/// Stars brighter than this get diffraction spikes. About the twenty
+/// brightest in the sky — enough to anchor the constellations, few enough
+/// that spikes still mean "bright".
+const SPIKE_MAGNITUDE: f32 = 1.3;
+
+/// A colour pushed away from white, so a halo carries the star's tint. At
+/// the alphas a glow is drawn at, the catalogue colour greys out.
+fn vivid(colour: Color, amount: f32) -> Color {
+    let [r, g, b, a] = colour.components;
+    let push = |c: f32| (1.0 + (c - 1.0) * amount).clamp(0.0, 1.0);
+    Color::new([push(r), push(g), push(b), a])
+}
+
+/// Four tapered rays from just outside a star's core: a cross, the eye's (and
+/// the telescope's) signature of a point too bright to be a dot.
+///
+/// They start at `inner`, not at the centre. Rays that met in the middle
+/// stacked under the core and brightened the one pixel the contrast rule is
+/// about — body text over Vega fell from 5.05:1 to 4.14:1.
+fn spikes(centre: Point, inner: f64, length: f64, base: f64) -> BezPath {
+    let mut path = BezPath::new();
+    for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+        let root = Point::new(centre.x + dx * inner, centre.y + dy * inner);
+        path.move_to(Point::new(root.x - dy * base, root.y + dx * base));
+        path.line_to(Point::new(centre.x + dx * length, centre.y + dy * length));
+        path.line_to(Point::new(root.x + dy * base, root.y - dx * base));
+        path.close_path();
+    }
+    path
+}
+
+/// Every mark that makes up the star field, back to front.
+///
+/// The core stays under [`STAR_ALPHA_CEILING`] — the contrast rule is about
+/// the brightest pixel a glyph can land on, and that is the core. Everything
+/// added around it (glow, spikes) is drawn far fainter than the core, so a
+/// bright star gains *presence* without any pixel getting brighter.
+pub fn star_marks(sky: &SkyState, w: f64, h: f64, phase: f64) -> Vec<Mark> {
     let pane_scale = (w.min(h) / 700.0).clamp(0.75, 1.5);
+    let mut marks = Vec::new();
     for star in &sky.stars {
         let (core, alpha) = star_geometry(star.magnitude, sky.darkness, pane_scale);
         let alpha = (alpha * twinkle(star.hr, star.position.radius(), phase))
@@ -366,14 +423,64 @@ fn draw_stars(cx: &mut floem::context::PaintCx, w: f64, h: f64, sky: &SkyState, 
         }
         let centre = to_screen(star.position, w, h);
         let colour = star_colour(star.colour_index);
+
+        let glow = star_glow(star.magnitude);
+        if glow > 0.0 {
+            let tint = vivid(colour, 2.2);
+            marks.push((disc(centre, core * 8.0), tint.with_alpha(alpha * 0.025 * glow)));
+            marks.push((disc(centre, core * 5.0), tint.with_alpha(alpha * 0.045 * glow)));
+        }
+        if star.magnitude < SPIKE_MAGNITUDE {
+            let strength = f64::from((SPIKE_MAGNITUDE - star.magnitude) / 2.8).min(1.0);
+            marks.push((
+                spikes(centre, core * 1.1, core * (4.0 + 6.0 * strength), core * 0.35),
+                colour.with_alpha(alpha * 0.55),
+            ));
+        }
         // Largest first, so the halo lies under a core drawn at full strength.
         for (multiple, ring) in STAR_RINGS {
-            cx.fill(
-                &Circle::new(centre, core * multiple),
-                colour.with_alpha(alpha * ring),
-                0.0,
-            );
+            marks.push((disc(centre, core * multiple), colour.with_alpha(alpha * ring)));
         }
+    }
+    marks
+}
+
+/// The Milky Way's colour: cool and faint, starlight through dust.
+const MILKY_WAY: Color = Color::from_rgb8(150, 166, 212);
+/// Opacity of one sample of the band at full weight. Samples overlap several
+/// deep, so this is a fraction of what the band actually reaches — see
+/// `the_milky_way_stays_a_haze`.
+const MILKY_WAY_ALPHA: f32 = 0.011;
+
+/// The band, as soft overlapping discs. Drawn under the stars and fading
+/// with them into day.
+pub fn milky_way_marks(sky: &SkyState, w: f64, h: f64) -> Vec<Mark> {
+    let shown = shown_darkness(sky.darkness);
+    let visibility = (shown * shown) as f32;
+    if visibility < 0.2 {
+        return Vec::new();
+    }
+    // About five degrees of sky near the zenith: the stereographic disc maps
+    // its unit radius to 90°, at half a unit per radian overhead.
+    let blob = disc_radius(w, h) * 0.045;
+    sky.milky_way
+        .iter()
+        .map(|p| {
+            let centre = to_screen(p.position, w, h);
+            (
+                disc(centre, blob),
+                MILKY_WAY.with_alpha(MILKY_WAY_ALPHA * p.weight * visibility),
+            )
+        })
+        .collect()
+}
+
+fn draw_stars(cx: &mut floem::context::PaintCx, w: f64, h: f64, sky: &SkyState, phase: f64) {
+    for (path, colour) in milky_way_marks(sky, w, h) {
+        cx.fill(&path, colour, 0.0);
+    }
+    for (path, colour) in star_marks(sky, w, h, phase) {
+        cx.fill(&path, colour, 0.0);
     }
 }
 
@@ -882,6 +989,90 @@ mod tests {
     fn forged_lets_the_sky_show_through_the_editor_pane() {
         assert_eq!(editor_pane_fill(Aesthetic::Forged), Color::TRANSPARENT);
         assert_eq!(editor_pane_fill(Aesthetic::Flat), crate::design::BG_BASE);
+    }
+
+    /// **The rule, measured on pixels rather than on alphas.** Every mark a
+    /// real night sky paints — band, glow, spikes, rings, core — rasterised,
+    /// and body text checked against the single brightest pixel.
+    ///
+    /// The alpha test above checks the core alone, and the core is not what
+    /// lands on screen: everything drawn under it stacks. Adding glow and
+    /// spikes that met in the middle took Vega from 5.05:1 to 4.14:1 while
+    /// that test stayed green.
+    #[test]
+    fn body_text_stays_readable_over_the_brightest_pixel_of_a_real_sky() {
+        let sky = SkyState::at(
+            SAN_FRANCISCO,
+            smithy_sky::time::julian_date(2024, 8, 10, 6, 0, 0.0),
+        );
+        assert!(sky.darkness > 0.99, "not a night sky");
+        let (w, h) = (1100u32, 760u32);
+        let mut pm = tiny_skia::Pixmap::new(w, h).unwrap();
+        let g = ground(sky.darkness).components;
+        pm.fill(tiny_skia::Color::from_rgba(g[0], g[1], g[2], 1.0).unwrap());
+        let marks = milky_way_marks(&sky, f64::from(w), f64::from(h))
+            .into_iter()
+            .chain(star_marks(&sky, f64::from(w), f64::from(h), 0.0));
+        for (path, colour) in marks {
+            let mut pb = tiny_skia::PathBuilder::new();
+            for el in path.elements() {
+                use floem::peniko::kurbo::PathEl;
+                match *el {
+                    PathEl::MoveTo(p) => pb.move_to(p.x as f32, p.y as f32),
+                    PathEl::LineTo(p) => pb.line_to(p.x as f32, p.y as f32),
+                    PathEl::QuadTo(a, b) => {
+                        pb.quad_to(a.x as f32, a.y as f32, b.x as f32, b.y as f32)
+                    }
+                    PathEl::CurveTo(a, b, c) => pb.cubic_to(
+                        a.x as f32, a.y as f32, b.x as f32, b.y as f32, c.x as f32, c.y as f32,
+                    ),
+                    PathEl::ClosePath => pb.close(),
+                }
+            }
+            let [r, gg, b, a] = colour.components;
+            let mut paint = tiny_skia::Paint::default();
+            paint.set_color(tiny_skia::Color::from_rgba(r, gg, b, a).unwrap());
+            if let Some(p) = pb.finish() {
+                pm.fill_path(&p, &paint, tiny_skia::FillRule::Winding, Default::default(), None);
+            }
+        }
+
+        let wcag = |c: f32| {
+            let c = f64::from(c);
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let brightest = pm
+            .pixels()
+            .iter()
+            .map(|p| {
+                let (r, g, b) = (p.red(), p.green(), p.blue());
+                0.2126 * wcag(f32::from(r) / 255.0)
+                    + 0.7152 * wcag(f32::from(g) / 255.0)
+                    + 0.0722 * wcag(f32::from(b) / 255.0)
+            })
+            .fold(0.0, f64::max);
+        let [r, g, b, _] = crate::design::FG.components;
+        let fg = 0.2126 * wcag(r) + 0.7152 * wcag(g) + 0.0722 * wcag(b);
+        let ratio = (fg + 0.05) / (brightest + 0.05);
+        assert!(ratio >= 4.5, "body text over the brightest pixel is {ratio:.2}:1");
+    }
+
+    /// The band is a haze behind the stars, never a stripe across the code:
+    /// its densest overlap stays well under the faintest star.
+    #[test]
+    fn the_milky_way_stays_a_haze() {
+        let sky = SkyState::at(
+            SAN_FRANCISCO,
+            smithy_sky::time::julian_date(2024, 8, 10, 6, 0, 0.0),
+        );
+        let marks = milky_way_marks(&sky, 1100.0, 760.0);
+        assert!(!marks.is_empty(), "an August night with no Milky Way");
+        let heaviest = marks.iter().map(|(_, c)| c.components[3]).fold(0.0f32, f32::max);
+        assert!(heaviest <= MILKY_WAY_ALPHA, "one sample at {heaviest}");
     }
 
     #[test]

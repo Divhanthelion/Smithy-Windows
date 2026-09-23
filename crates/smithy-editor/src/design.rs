@@ -184,7 +184,14 @@ pub const MONO: &str = "Menlo, Monaco, DejaVu Sans Mono, Consolas, monospace";
 /// ▸, ▾, ❖, ✓ or ✕ at all. A label drawing an icon needs a family picked for
 /// coverage, not for looks — separate constant so retuning the code font cannot
 /// silently break every icon in the tree.
+///
+/// Windows has none of the Mac families in [`MONO`], so it falls through to
+/// Consolas — which has no ⌘, ⌃, ⇧, ▸ or ✓ either, and every icon was a box.
+/// Segoe UI Symbol ships with Windows and carries all of them.
+#[cfg(not(windows))]
 pub const SYMBOL: &str = MONO;
+#[cfg(windows)]
+pub const SYMBOL: &str = "Segoe UI Symbol, Cascadia Mono, Consolas, monospace";
 
 /// Every glyph the chrome draws, and the evidence that it can be drawn.
 ///

@@ -22,6 +22,8 @@ mod runtime;
 mod settings;
 mod terminal;
 mod voice;
+#[cfg(windows)]
+mod windows;
 
 /// Temporary: log every key event a handler actually receives.
 ///
@@ -108,10 +110,14 @@ fn main() {
     // window at a platform default, and macOS will happily restore that frame
     // onto a display that is no longer connected. 80,48 is below the menu bar
     // on the primary display.
+    let size = floem::peniko::kurbo::Size::new(1440.0, 900.0);
+    let origin = floem::peniko::kurbo::Point::new(80.0, 48.0);
+    #[cfg(windows)]
+    let (size, origin) = windows::fit_to_work_area(size).unwrap_or((size, origin));
     let config = floem::window::WindowConfig::default()
         .title("Smithy")
-        .size(floem::peniko::kurbo::Size::new(1440.0, 900.0))
-        .position(floem::peniko::kurbo::Point::new(80.0, 48.0));
+        .size(size)
+        .position(origin);
 
     let app = floem::Application::new();
     #[cfg(target_os = "macos")]
@@ -902,7 +908,7 @@ fn app_view() -> impl IntoView {
         smithy_editor::Menu::new(
             "Code",
             vec![
-                smithy_editor::MenuItem::action_with("Hover", "⌃K", {
+                smithy_editor::MenuItem::action_with("Hover", &format!("{}K", smithy_editor::CONTROL), {
                     let ask = ask_hover_menu.clone();
                     move || ask()
                 }),
@@ -988,7 +994,7 @@ fn app_view() -> impl IntoView {
                     smithy_editor::accel("L"),
                     signals.agent_visible,
                 ),
-                smithy_editor::MenuItem::toggle_with("Terminal", "⌃`", signals.terminal_visible),
+                smithy_editor::MenuItem::toggle_with("Terminal", &format!("{}`", smithy_editor::CONTROL), signals.terminal_visible),
                 smithy_editor::MenuItem::Separator,
                 smithy_editor::MenuItem::toggle("Problems", problems_visible),
                 smithy_editor::MenuItem::toggle("Call Graph", agent_state.call_graph.visible),

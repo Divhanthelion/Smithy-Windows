@@ -25,7 +25,15 @@ use crate::theme::catppuccin;
 pub const PRIMARY_MODIFIER: &str = if cfg!(target_os = "macos") {
     "⌘"
 } else {
+    CONTROL
+};
+
+/// The Control key as a hint: the glyph on macOS, where it is the convention,
+/// and the word elsewhere, where `⌃` is a symbol nobody reads as a key.
+pub const CONTROL: &str = if cfg!(target_os = "macos") {
     "⌃"
+} else {
+    "Ctrl+"
 };
 
 /// A shortcut hint using the platform's primary modifier — `accel("O")` is

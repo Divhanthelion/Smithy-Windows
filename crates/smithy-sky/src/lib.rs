@@ -20,6 +20,7 @@
 
 pub mod catalogue;
 pub mod coords;
+pub mod milky_way;
 pub mod moon;
 pub mod projection;
 pub mod sun;
@@ -164,6 +165,9 @@ pub struct SkyState {
     pub darkness: f64,
     /// Every catalogued star above the horizon, projected onto the unit disc.
     pub stars: Vec<VisibleStar>,
+    /// The Milky Way above the horizon, as weighted samples of the galactic
+    /// plane. See [`milky_way`].
+    pub milky_way: Vec<milky_way::GlowPoint>,
     /// Local mean solar time, hours since local midnight. Shared with the
     /// fisherman, who keeps the same clock.
     pub solar_hours: f64,
@@ -213,6 +217,7 @@ impl SkyState {
             moon_illumination: moon::illuminated_fraction(jd),
             moon_waxing: moon::is_waxing(jd),
             stars,
+            milky_way: milky_way::visible(lst, latitude),
             solar_hours: time::local_solar_hours(jd, location.longitude_deg),
         }
     }

@@ -57,5 +57,7 @@ similar.workspace = true
 percent-encoding.workspace = true
 
 [dev-dependencies]
+# Headless renders of the backdrop, for the `sky` example.
+tiny-skia = "0.11"
 proptest.workspace = true
 tempfile.workspace = true

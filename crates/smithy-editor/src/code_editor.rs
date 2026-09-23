@@ -754,9 +754,19 @@ fn shortcut_list() -> impl IntoView {
         shortcut(crate::menu_bar::accel("L"), "toggle the agent"),
         // Control on every platform, which is the convention for this one and
         // what the handler matches.
-        shortcut("⌃`".to_string(), "toggle the terminal"),
+        shortcut(format!("{}`", crate::menu_bar::CONTROL), "toggle the terminal"),
     ))
-    .style(|s| s.items_center().justify_center())
+    // A card of its own: it floats over the project map, and without a ground
+    // the two texts ran into each other and neither could be read.
+    .style(|s| {
+        s.items_center()
+            .justify_center()
+            .padding(design::SPACE_5)
+            .background(design::BG_BASE.with_alpha(0.88))
+            .border(1.0)
+            .border_color(design::BG_RAISED)
+            .border_radius(design::RADIUS_SM * 2.0)
+    })
 }
 
 /// The empty-editor pane with no project map behind it.

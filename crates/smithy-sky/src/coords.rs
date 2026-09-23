@@ -59,6 +59,31 @@ pub fn ecliptic_to_equatorial(
     }
 }
 
+/// Convert galactic coordinates to equatorial (J2000).
+///
+/// The galaxy is catalogued on its own plane, and the Milky Way *is* that
+/// plane seen from inside it, so this is what puts the band where it really
+/// runs. The constants are the IAU's definition of the frame: the north
+/// galactic pole at RA 192.85948°, Dec +27.12825°, and the north celestial pole
+/// at galactic longitude 122.93192°.
+pub fn galactic_to_equatorial(longitude_deg: f64, latitude_deg: f64) -> Equatorial {
+    const POLE_RA: f64 = 192.859_48;
+    const POLE_DEC: f64 = 27.128_25;
+    const NCP_LONGITUDE: f64 = 122.931_92;
+
+    let (l, b) = (longitude_deg.to_radians(), latitude_deg.to_radians());
+    let (pole_dec, ncp) = (POLE_DEC.to_radians(), NCP_LONGITUDE.to_radians());
+
+    let sin_dec = b.sin() * pole_dec.sin() + b.cos() * pole_dec.cos() * (ncp - l).cos();
+    let y = b.cos() * (ncp - l).sin();
+    let x = b.sin() * pole_dec.cos() - b.cos() * pole_dec.sin() * (ncp - l).cos();
+
+    Equatorial {
+        right_ascension_deg: normalise_degrees(POLE_RA + y.atan2(x).to_degrees()),
+        declination_deg: sin_dec.clamp(-1.0, 1.0).asin().to_degrees(),
+    }
+}
+
 /// The mean obliquity of the ecliptic, in degrees — the tilt that gives the
 /// year its seasons. It shrinks by about half an arcsecond a year.
 pub fn mean_obliquity_deg(days_since_j2000: f64) -> f64 {
@@ -212,6 +237,19 @@ mod tests {
 
         let winter = ecliptic_to_equatorial(270.0, 0.0, obliquity);
         assert!((winter.declination_deg + obliquity).abs() < 1e-6);
+    }
+
+    /// The galactic centre and pole land where every star chart puts them:
+    /// the centre in Sagittarius at RA 266.40°, Dec −28.94°, and the pole in
+    /// Coma Berenices, by definition.
+    #[test]
+    fn the_galactic_centre_is_in_sagittarius() {
+        let centre = galactic_to_equatorial(0.0, 0.0);
+        assert!((centre.right_ascension_deg - 266.405).abs() < 0.01, "{centre:?}");
+        assert!((centre.declination_deg + 28.936).abs() < 0.01, "{centre:?}");
+
+        let pole = galactic_to_equatorial(0.0, 90.0);
+        assert!(separation_deg(pole, at(192.859_48, 27.128_25)) < 1e-6, "{pole:?}");
     }
 
     #[test]
