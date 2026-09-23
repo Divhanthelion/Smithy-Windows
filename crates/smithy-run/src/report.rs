@@ -43,7 +43,7 @@ pub fn render(
 
     let short_base: String = state.base.chars().take(10).collect();
     out.push_str(&format!(
-        "| | |\n|---|---|\n| Branch | `{}` (from `{short_base}`) |\n| Started | {} |\n| Last update | {} |\n| Time spent | {} of {}h |\n| Toolchain | {} |\n| Model requests | {} ({} prompt tokens, {}% from cache) |\n\n",
+        "| | |\n|---|---|\n| Branch | `{}` (from `{short_base}`) |\n| Started | {} |\n| Last update | {} |\n| Time spent | {} of {}h |\n| Toolchain | {} |\n| Model requests | {} ({} prompt tokens, {}) |\n\n",
         state.branch,
         utc_minute(state.started),
         utc_minute(state.updated),
@@ -52,10 +52,15 @@ pub fn render(
         state.toolchain.name,
         state.usage.requests,
         state.usage.prompt_tokens,
-        if state.usage.prompt_tokens > 0 {
-            state.usage.cached_tokens * 100 / state.usage.prompt_tokens
+        // vLLM reports cache hits only with --enable-prompt-tokens-details;
+        // zero from an endpoint that says nothing is not a measured zero.
+        if state.usage.cached_tokens > 0 && state.usage.prompt_tokens > 0 {
+            format!(
+                "{}% from cache",
+                state.usage.cached_tokens * 100 / state.usage.prompt_tokens
+            )
         } else {
-            0
+            "cache hits not reported".to_string()
         },
     ));
     out.push_str(&format!(

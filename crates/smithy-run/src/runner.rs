@@ -310,6 +310,9 @@ impl Runner {
                 return v;
             }
         }
+        if let Err(why) = preflight(&self.state.toolchain, &self.root) {
+            return Verdict::Failed(why);
+        }
         if self.state.baseline.is_none() {
             self.take_baseline();
             self.save();
@@ -1434,6 +1437,52 @@ impl Runner {
             &format!("Smithy run {}", self.state.id),
             &format!("{headline}\n{done}/{total} tasks · {}", report.display()),
         );
+    }
+}
+
+/// Every program the toolchain's commands start with, found on the PATH the
+/// Checks will run with. The first real Run spent an hour planning,
+/// researching and building before `exit 127` from `cargo build` said the
+/// shell could not see cargo; this says it in a second.
+pub fn preflight(toolchain: &Toolchain, root: &Path) -> Result<(), String> {
+    let mut programs: Vec<String> = [
+        &toolchain.build,
+        &Some(toolchain.test.clone()),
+        &toolchain.lint,
+    ]
+    .into_iter()
+    .flatten()
+    .flat_map(|cmd| {
+        cmd.split("&&")
+            .filter_map(|p| p.split_whitespace().next().map(str::to_string))
+            .collect::<Vec<_>>()
+    })
+    .collect();
+    programs.sort();
+    programs.dedup();
+    let missing: Vec<String> = programs
+        .into_iter()
+        .filter(|p| {
+            let probe = format!("command -v {p}");
+            smithy_tools::tools::bash::run_captured(&probe, root, Duration::from_secs(30))
+                .map(|c| !c.success())
+                .unwrap_or(true)
+        })
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the Checks need {} but the shell cannot find {} on its PATH; start the Run from a \
+             shell where {} runs",
+            missing.join(", "),
+            if missing.len() == 1 { "it" } else { "them" },
+            missing
+                .iter()
+                .map(|m| format!("`{m}`"))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        ))
     }
 }
 

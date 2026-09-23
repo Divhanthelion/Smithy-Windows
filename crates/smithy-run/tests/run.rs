@@ -476,3 +476,29 @@ async fn the_model_cannot_use_git_and_the_report_lists_what_it_tried() {
         .iter()
         .any(|s| s == "sneaky"));
 }
+
+/// From the first real Run: a toolchain the shell cannot find fails in a
+/// second, before planning, instead of an hour later as `exit 127`.
+#[tokio::test]
+async fn a_missing_toolchain_fails_before_any_session() {
+    let tmp = project();
+    let root = tmp.path();
+    std::fs::write(
+        root.join(".smithy/checks.toml"),
+        "toolchain = \"fake\"\ntest = \"no-such-tool-xyz check\"\ncounter = \"cargo\"\n",
+    )
+    .unwrap();
+    git(root, &["commit", "-qam", "missing tool"]);
+    let h = harness(root, vec![answer(PLAN)]);
+
+    let state = Runner::start(root, "x", Ceilings::default(), h.deps.clone())
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(&state.verdict, Some(Verdict::Failed(w)) if w.contains("`no-such-tool-xyz`")),
+        "{:?}",
+        state.verdict
+    );
+    assert!(h.agents.purposes.lock().unwrap().is_empty());
+}
