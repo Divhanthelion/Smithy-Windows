@@ -197,6 +197,27 @@ where
     consume_sse_with_idle(stream, on_delta, StreamIdle::stall()).await
 }
 
+/// An error the server sent *inside* the stream.
+///
+/// vLLM validates sampling parameters after it has already answered `200` and
+/// opened the stream, so a rejected request arrives as one `{"error": …}` frame
+/// and `[DONE]`. `apply_sse_line` skips frames it does not recognise, which
+/// turned "min_p is not supported with speculative decoding" into an empty
+/// completion — reported three retries later as a runaway reasoning loop.
+fn stream_error(line: &str) -> Option<ProviderError> {
+    let data = line.strip_prefix("data:")?.trim();
+    let v = serde_json::from_str::<Value>(data).ok()?;
+    let error = v.get("error").filter(|e| !e.is_null())?;
+    let message = error["message"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| error.to_string());
+    Some(ProviderError::Http {
+        status: error["code"].as_u64().unwrap_or(500) as u16,
+        body: message,
+    })
+}
+
 pub async fn consume_sse_with_idle<S, B, E>(
     stream: S,
     on_delta: Option<&(dyn Fn(Delta) + Send + Sync)>,
@@ -243,6 +264,9 @@ where
         while let Some(newline) = buffer.find('\n') {
             let line = buffer[..newline].trim().to_string();
             buffer.drain(..=newline);
+            if let Some(error) = stream_error(&line) {
+                return Err(error);
+            }
             if apply_sse_line(&line, &mut out, &mut partials, on_delta) {
                 done = true;
             }
@@ -321,6 +345,24 @@ mod tests {
             err.to_string().contains("stopped sending"),
             "generation silence is still a stall: {err}"
         );
+    }
+
+    /// The frame vLLM actually sent, verbatim. It used to parse as an empty
+    /// completion and be retried as a reasoning loop.
+    #[tokio::test]
+    async fn an_error_frame_inside_the_stream_is_an_error() {
+        let frames = concat!(
+            "data: {\"error\": {\"message\": \"The min_p and logit_bias sampling parameters are not yet supported with speculative decoding.\", \"type\": \"BadRequestError\", \"param\": null, \"code\": 400}}\n",
+            "data: [DONE]\n",
+        );
+        let stream = futures_util::stream::iter([Ok::<_, String>(frames.as_bytes().to_vec())]);
+        match consume_sse_stream(stream, None).await {
+            Err(ProviderError::Http { status, body }) => {
+                assert_eq!(status, 400);
+                assert!(body.contains("min_p"), "{body}");
+            }
+            other => panic!("expected the server's 400, got {other:?}"),
+        }
     }
 
     #[tokio::test]

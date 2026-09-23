@@ -14,6 +14,7 @@
 //! The whole client is a few hundred lines. That is the point — it is small
 //! enough to read in one sitting, and it cannot break in a way you can't see.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -36,6 +37,10 @@ pub struct LmStudio {
     http: reqwest::Client,
     base_url: String,
     model: String,
+    /// Set once the server has rejected `min_p` by name. vLLM does whenever
+    /// speculative decoding is on, and it cannot be seen from `/v1/models`, so
+    /// the first refusal is the only signal there is.
+    omit_min_p: AtomicBool,
 }
 
 impl LmStudio {
@@ -52,6 +57,7 @@ impl LmStudio {
             http,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             model: model.into(),
+            omit_min_p: AtomicBool::new(false),
         })
     }
 
@@ -83,27 +89,35 @@ impl LmStudio {
         }
     }
 
-    /// Ask the native API about the configured model.
+    /// Ask the server about the configured model.
     ///
-    /// Returns `Ok(None)` when the native API isn't available — older LM Studio
-    /// builds only have the OpenAI surface, and this must degrade rather than
-    /// hard-fail.
+    /// LM Studio's native API first, then a vLLM-shaped `/v1/models`. Returns
+    /// `Ok(None)` when neither says anything — older LM Studio builds only have
+    /// the OpenAI surface, and this must degrade rather than hard-fail.
     pub async fn probe_model(&self) -> Result<Option<ModelInfo>, ProviderError> {
-        let Ok(response) = self.http.get(self.native_models_url()).send().await else {
-            return Ok(None);
-        };
-        if !response.status().is_success() {
-            return Ok(None);
+        if let Some(info) = self.probe_native().await {
+            return Ok(Some(info));
         }
-        let Ok(text) = response.text().await else {
-            return Ok(None);
-        };
-        let Ok(value) = serde_json::from_str::<Value>(&text) else {
-            return Ok(None);
-        };
-        let Some(models) = value["models"].as_array() else {
-            return Ok(None);
-        };
+        Ok(self.probe_openai().await)
+    }
+
+    /// The OpenAI surface, which is all vLLM has. See [`openai_model_info`].
+    async fn probe_openai(&self) -> Option<ModelInfo> {
+        let response = self.http.get(self.models_url()).send().await.ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        openai_model_info(&response.text().await.ok()?, &self.model)
+    }
+
+    async fn probe_native(&self) -> Option<ModelInfo> {
+        let response = self.http.get(self.native_models_url()).send().await.ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let text = response.text().await.ok()?;
+        let value = serde_json::from_str::<Value>(&text).ok()?;
+        let models = value["models"].as_array()?;
 
         let keys: Vec<String> = models
             .iter()
@@ -112,11 +126,11 @@ impl LmStudio {
         let resolved = resolve_model(&self.model, &keys);
 
         let Some(entry) = models.iter().find(|m| m["key"].as_str() == Some(&resolved)) else {
-            return Ok(Some(ModelInfo {
+            return Some(ModelInfo {
                 key: resolved,
                 found: false,
                 ..Default::default()
-            }));
+            });
         };
 
         // A model can be downloaded but not loaded. The OpenAI `/v1/models`
@@ -132,7 +146,7 @@ impl LmStudio {
             .and_then(|i| i.first())
             .and_then(|i| i["config"]["context_length"].as_i64());
 
-        Ok(Some(ModelInfo {
+        Some(ModelInfo {
             key: resolved,
             found: true,
             loaded,
@@ -146,7 +160,7 @@ impl LmStudio {
                 .as_str()
                 .unwrap_or_default()
                 .to_string(),
-        }))
+        })
     }
 
     /// The request body. Always streamed — see [`LmStudio::complete`].
@@ -170,18 +184,43 @@ impl LmStudio {
         // Without this the final chunk carries no usage block, and the context
         // budget has nothing to track.
         body["stream_options"] = json!({ "include_usage": true });
+        if self.omit_min_p.load(Ordering::Relaxed) {
+            if let Some(fields) = body.as_object_mut() {
+                fields.remove("min_p");
+            }
+        }
         body
+    }
+
+    /// One retry without `min_p`, when that is exactly what the server refused.
+    ///
+    /// The refusal arrives before any token, so nothing reached `on_delta` and
+    /// the retry is invisible. The flag sticks: every later request in this
+    /// provider's life goes without it rather than paying the refusal again.
+    async fn complete_adapting(
+        &self,
+        request: CompletionRequest<'_>,
+        on_delta: Option<&(dyn Fn(Delta) + Send + Sync)>,
+    ) -> Result<Completion, ProviderError> {
+        match self.complete_streaming(&request, on_delta).await {
+            Err(ProviderError::Http { status: 400, body })
+                if body.contains("min_p") && !self.omit_min_p.swap(true, Ordering::Relaxed) =>
+            {
+                self.complete_streaming(&request, on_delta).await
+            }
+            other => other,
+        }
     }
 
     async fn complete_streaming(
         &self,
-        request: CompletionRequest<'_>,
+        request: &CompletionRequest<'_>,
         on_delta: Option<&(dyn Fn(Delta) + Send + Sync)>,
     ) -> Result<Completion, ProviderError> {
         let response = self
             .http
             .post(self.chat_url())
-            .json(&self.build_body(&request))
+            .json(&self.build_body(request))
             .timeout(request.http_timeout(REQUEST_TIMEOUT))
             .send()
             .await
@@ -298,7 +337,7 @@ impl Provider for LmStudio {
         // `stream` was hardcoded true with no way to set it, so nothing could
         // reach them — while nine tests exercised them and passed. A suite that
         // is green over unreachable code is not reporting on the program.
-        self.complete_streaming(request, on_delta).await
+        self.complete_adapting(request, on_delta).await
     }
 
     fn build_body(&self, request: &CompletionRequest<'_>) -> Value {
@@ -527,6 +566,30 @@ mod step_budget_tests {
         assert_eq!(seconds_for_context(65_536), 1_800);
         assert_eq!(seconds_for_context(i64::MAX / 4), 7_200);
     }
+}
+
+/// What a vLLM `/v1/models` response says about the configured model.
+///
+/// vLLM names the window it is serving (`max_model_len`) and lists only what it
+/// has loaded, so an entry carrying that field is both "found" and "loaded".
+/// LM Studio's OpenAI surface has no such field and lists everything on disk; an
+/// entry without it says nothing, and `preflight`'s weaker id check stands.
+fn openai_model_info(body: &str, configured: &str) -> Option<ModelInfo> {
+    let value = serde_json::from_str::<Value>(body).ok()?;
+    let models = value["data"].as_array()?;
+    let resolved = resolve_model(configured, &parse_model_ids(body));
+    let entry = models.iter().find(|m| m["id"].as_str() == Some(&resolved))?;
+    let window = entry["max_model_len"].as_i64()?;
+    Some(ModelInfo {
+        key: resolved,
+        found: true,
+        loaded: true,
+        context_length: Some(window),
+        max_context_length: Some(window),
+        trained_for_tool_use: true,
+        format: entry["owned_by"].as_str().unwrap_or_default().to_string(),
+        quantization: String::new(),
+    })
 }
 
 /// Extract the `id` of every entry in a `/v1/models` response.
@@ -821,6 +884,38 @@ mod resolve_tests {
     #[test]
     fn an_unknown_model_is_preserved_so_the_error_names_it() {
         assert_eq!(resolve_model("llama-99b", &available()), "llama-99b");
+    }
+
+    /// A live vLLM `/v1/models` payload (Jetson Thor, trimmed of `permission`).
+    const VLLM_MODELS: &str = r#"{"object":"list","data":[{"id":"Qwen3.8-Flash-Next","object":"model","created":1790163277,"owned_by":"vllm","root":"local-inference-lab/Qwen3.8-Flash-Next-NVFP4","parent":null,"max_model_len":131072}]}"#;
+
+    /// Without this the window is unknown and every budget falls back to the
+    /// 32k-class defaults, on a server that said plainly it holds 131k.
+    #[test]
+    fn a_vllm_models_entry_reports_its_served_window() {
+        let info = openai_model_info(VLLM_MODELS, "Qwen3.8-Flash-Next").unwrap();
+        assert!(info.found && info.loaded);
+        assert_eq!(info.context_length, Some(131_072));
+        assert_eq!(info.suggested_limits().max_steps, 180);
+    }
+
+    #[test]
+    fn a_vllm_model_id_resolves_case_insensitively() {
+        let info = openai_model_info(VLLM_MODELS, "qwen3.8-flash-next").unwrap();
+        assert_eq!(info.key, "Qwen3.8-Flash-Next");
+    }
+
+    /// LM Studio's OpenAI surface lists downloaded models with no window. That
+    /// is not evidence of a loaded model, so it must not be reported as one.
+    #[test]
+    fn an_entry_without_a_served_window_says_nothing() {
+        let lmstudio = r#"{"data":[{"id":"qwen3.6-27b","object":"model","owned_by":"organization_owner"}]}"#;
+        assert!(openai_model_info(lmstudio, "qwen3.6-27b").is_none());
+    }
+
+    #[test]
+    fn a_model_the_vllm_server_does_not_serve_is_not_found() {
+        assert!(openai_model_info(VLLM_MODELS, "llama-99b").is_none());
     }
 }
 
