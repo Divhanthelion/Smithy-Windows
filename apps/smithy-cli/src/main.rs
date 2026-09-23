@@ -4,6 +4,7 @@ mod args;
 mod boot;
 mod hooks;
 mod repl;
+mod run;
 
 use smithy_agent::{init_project_harness, install_bundled_user_skills, load_harness};
 use smithy_project::Project;
@@ -18,6 +19,14 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(first @ ("run" | "runs")) = raw.first().map(String::as_str) {
+        if raw.iter().any(|a| a == "-h" || a == "--help") {
+            print!("{}", run::usage());
+            return Ok(());
+        }
+        let (cmd, project) = run::parse(first == "runs", &raw[1..])?;
+        return run::run(cmd, &project).await;
+    }
     if raw.iter().any(|a| a == "-h" || a == "--help") {
         print!("{}", args::usage());
         return Ok(());

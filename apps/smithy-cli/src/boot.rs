@@ -23,7 +23,22 @@ pub struct Booted {
     pub harness: Harness,
 }
 
-pub async fn boot(project: &Project, yolo: bool, skill: Option<Skill>) -> Result<Booted, String> {
+/// What every Session in this Project shares: the model, its limits, the
+/// Map and the Index. Built once; a Run starts many Sessions from it.
+pub struct Prepared {
+    pub provider: Arc<dyn smithy_agent::Provider>,
+    pub model_label: String,
+    pub limits: smithy_agent::Limits,
+    /// Seconds a turn may take on this provider, before any Skill says otherwise.
+    pub turn_seconds: u64,
+    pub brave_configured: bool,
+    pub extracted: smithy_project::ProjectContext,
+    pub symbol_index: Arc<smithy_project::symbols::SymbolIndex>,
+    /// How much of the window the Map may take, to rebuild it later.
+    pub budget: ContextBudget,
+}
+
+pub async fn prepare(project: &Project) -> Result<Prepared, String> {
     let data_dir = ProjectRegistry::default_location()
         .map(|r| r.data_dir().to_path_buf())
         .unwrap_or_else(|_| std::env::temp_dir().join("smithy"));
@@ -45,21 +60,13 @@ pub async fn boot(project: &Project, yolo: bool, skill: Option<Skill>) -> Result
     let info = provider.probe_model().await.map_err(|e| e.to_string())?;
     provider.preflight().await.map_err(|e| e.to_string())?;
 
-    let (model_label, mut limits) = match &info {
+    let (model_label, limits) = match &info {
         Some(info) => (info.label(), info.suggested_limits()),
         None => (
             provider.model().to_string(),
             smithy_agent::Limits::default(),
         ),
     };
-    limits.max_seconds = skill
-        .as_ref()
-        .and_then(|s| s.meta.max_seconds)
-        .unwrap_or_else(|| provider_choice.turn_seconds());
-    let unbounded_search = skill
-        .as_ref()
-        .and_then(|s| s.meta.tools.as_ref())
-        .is_some_and(|t| t.iter().any(|n| n == "web_search"));
 
     let budget = ContextBudget::for_window(info.as_ref().and_then(|i| i.context_length));
     let graph = ProjectRegistry::default_location().ok().and_then(|reg| {
@@ -76,7 +83,6 @@ pub async fn boot(project: &Project, yolo: bool, skill: Option<Skill>) -> Result
         eprintln!("[project] {warning}");
     }
 
-    let workspace = Workspace::open(&project.root)?;
     let index_root = project.root.clone();
     let symbol_index = tokio::task::spawn_blocking(move || {
         Arc::new(smithy_project::symbols::SymbolIndex::build(&index_root))
@@ -84,6 +90,39 @@ pub async fn boot(project: &Project, yolo: bool, skill: Option<Skill>) -> Result
     .await
     .map_err(|e| format!("symbol index failed: {e}"))?;
 
+    Ok(Prepared {
+        provider,
+        model_label,
+        limits,
+        turn_seconds: provider_choice.turn_seconds(),
+        brave_configured,
+        extracted,
+        symbol_index,
+        budget,
+    })
+}
+
+pub async fn boot(project: &Project, yolo: bool, skill: Option<Skill>) -> Result<Booted, String> {
+    let Prepared {
+        provider,
+        model_label,
+        mut limits,
+        turn_seconds,
+        brave_configured,
+        extracted,
+        symbol_index,
+        ..
+    } = prepare(project).await?;
+    limits.max_seconds = skill
+        .as_ref()
+        .and_then(|s| s.meta.max_seconds)
+        .unwrap_or(turn_seconds);
+    let unbounded_search = skill
+        .as_ref()
+        .and_then(|s| s.meta.tools.as_ref())
+        .is_some_and(|t| t.iter().any(|n| n == "web_search"));
+
+    let workspace = Workspace::open(&project.root)?;
     let mut registry = assemble_registry(
         unbounded_search,
         provider.clone(),
@@ -184,7 +223,7 @@ pub async fn boot(project: &Project, yolo: bool, skill: Option<Skill>) -> Result
     })
 }
 
-fn assemble_registry(
+pub fn assemble_registry(
     unbounded_search: bool,
     provider: Arc<dyn smithy_agent::Provider>,
     project_root: &std::path::Path,

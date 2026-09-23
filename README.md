@@ -337,6 +337,37 @@ arrows move the highlight. `@path` on a command becomes an
 Attachment, same as drop. Click a budget-bar row (system prompt, map, tool
 JSON, conversation) or **last request** to see exactly what was sent.
 
+### Unattended runs
+
+```bash
+smithy-agent run "a library that parses ISO 8601 durations, with tests and a small CLI"
+```
+
+One intent in; a branch of checked commits out. The Run branches
+(`smithy/run-<id>`) from a clean tree, plans Tasks with the Checks that decide
+each one, and works them in order: research when a Task hinges on outside
+facts, then up to three Attempts per Task. A Task is done when the runner has
+run its Checks itself, the full suite has not regressed from where it started,
+and tests that predate the Run were not weakened, skipped or deleted — not when
+the model says so. Each done Task is a commit. Nothing is pushed; git belongs
+to the runner, and the model's own `git commit` is refused.
+
+Jev makes the judgment calls (whether to research, what to do after a failed
+round, whether test edits were cheating, whether research answered its
+question), each logged with exactly what it was shown so thresholds can be
+recalibrated against real runs. Before anything is built, Jev is asked whether
+the intent — and then each Task — is illegal or clearly harmful to others; a
+yes, or no answer at all, stops the Run and wakes you.
+
+It stops at 8 hours, after two Tasks in a row are blocked, or when it needs
+you, and says so with a toast and `.smithy/runs/<id>/REPORT.md`: the verdict,
+what needs you, every Task with its checks and commit, why the blocked ones are
+blocked, research Notes and how many of their findings verified, commands it
+would have asked about, and every decision. `smithy-agent run --resume` picks up
+after a crash (an interrupted Attempt's work is stashed, never discarded);
+`smithy-agent runs` lists them. Rust, CMake + ctest and pytest are detected;
+`.smithy/checks.toml` sets the commands for anything else.
+
 ### MCP
 
 Servers listed in `.smithy/mcp.json` (Project, then `~/.smithy/mcp.json`;

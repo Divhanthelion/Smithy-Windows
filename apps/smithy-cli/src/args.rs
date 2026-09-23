@@ -22,6 +22,9 @@ smithy-agent — a Session in the terminal. Same loop as the editor.
   smithy-agent --init-harness    copy the shipped system prompt into
                                  .smithy/harness/SYSTEM.md so you can edit it
   smithy-agent --which-harness   print which SYSTEM.md this Project would load
+  smithy-agent run \"INTENT\"      an unattended Run: plan, build, check and commit
+                                 on its own branch until done or blocked
+                                 (smithy-agent run --help)
 
 In the REPL: /help  /inspect  /prompt  /request  /skills
              /new  /yolo  /reviewed  /compact  /handoff  /quit

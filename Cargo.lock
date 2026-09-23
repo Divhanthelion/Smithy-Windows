@@ -6377,6 +6377,7 @@ dependencies = [
  "similar",
  "smithy-agent",
  "smithy-project",
+ "smithy-run",
  "smithy-tools",
  "tokio",
 ]
