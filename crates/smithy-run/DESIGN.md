@@ -191,6 +191,28 @@ leaves one:
   later learned it — whether it was right;
 - commands that would have asked; usage (requests, tokens, cache rate).
 
+## Changed while building
+
+- **Cheating is refused twice before it blocks.** A first detection fails
+  the round and tells the model what it weakened and where the original
+  is; a second blocks the Task and stashes the work. Weakened tests never
+  land either way, and a false positive no longer costs the whole Task.
+- **`--allow T3` also retries a blocked Task** with fresh attempts: naming
+  it on resume means you looked and want it tried again.
+- **The guardrail's stop cases are not in the repository.** The allow side
+  (ordinary intents, including security tools on your own systems) is in
+  `examples/jev.rs`; the stop side is read from a local file named by
+  `SMITHY_GUARDRAIL_CASES`, one intent per line, and only its scores are
+  printed.
+- **A sustained 429 outlasted Jev's 30-second patience** once during
+  calibration, so the guardrail retries for five minutes before failing
+  closed.
+- **Measured thresholds** (2026-09-23, all 43 cases on the right side):
+  research 0.79–0.93 vs 0.07–0.10 (0.5); cheat 0.89–0.97 vs 0.06–0.16
+  (0.5); answered 0.63–0.71 vs 0.03–0.06 (0.35); next move 5/5 acceptable,
+  with "compact near a full window" the one low-confidence pick, which is
+  why that move is a rule; guardrail allow side 0.02–0.05 (0.3).
+
 ## Build order
 
 Each step is tested and committed on its own:

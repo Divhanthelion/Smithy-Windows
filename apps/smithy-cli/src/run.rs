@@ -122,9 +122,14 @@ pub async fn run(cmd: RunCommand, project: &Path) -> Result<(), String> {
 
     let prepared = prepare(&project).await?;
     eprintln!(
-        "[run] model {} · project {}",
+        "[run] model {} · project {} · web_search {}",
         prepared.model_label,
-        root.display()
+        root.display(),
+        if prepared.brave_configured {
+            "on"
+        } else {
+            "off (no Brave key: research can fetch known URLs but not search)"
+        }
     );
     let jev = Jev::from_store();
     if jev.is_none() {
