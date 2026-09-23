@@ -138,10 +138,18 @@ impl Git {
     }
 
     /// Stash tracked changes and untracked files under `label`. `false` when
-    /// there was nothing to stash. Pre-Run untracked files are left alone.
-    pub fn stash(&self, label: &str, exclude: &BTreeSet<String>) -> Result<bool, String> {
+    /// there was nothing to stash. Pre-Run untracked files are left alone, and
+    /// so is anything under `keep` (the Run's own records, which a crash must
+    /// not take with it).
+    pub fn stash(
+        &self,
+        label: &str,
+        exclude: &BTreeSet<String>,
+        keep: &str,
+    ) -> Result<bool, String> {
         let mut paths: Vec<String> = self.modified()?;
         paths.extend(self.untracked()?.difference(exclude).cloned());
+        paths.retain(|p| keep.is_empty() || !p.replace('\\', "/").starts_with(keep));
         if paths.is_empty() {
             return Ok(false);
         }
@@ -393,12 +401,17 @@ mod tests {
         std::fs::write(tmp.path().join("a.txt"), "half-done\n").unwrap();
         std::fs::write(tmp.path().join("partial.rs"), "fn").unwrap();
 
-        assert!(g.stash("smithy-run-1-crash-T1a1", &before).unwrap());
+        assert!(g
+            .stash("smithy-run-1-crash-T1a1", &before, ".smithy/runs/")
+            .unwrap());
         assert!(g.modified().unwrap().is_empty());
         assert_eq!(g.untracked().unwrap(), before);
         let list = g.run(&["stash", "list"]).unwrap();
         assert!(list.contains("smithy-run-1-crash-T1a1"), "{list}");
-        assert!(!g.stash("again", &before).unwrap(), "nothing left to stash");
+        assert!(
+            !g.stash("again", &before, ".smithy/runs/").unwrap(),
+            "nothing left to stash"
+        );
     }
 
     #[test]

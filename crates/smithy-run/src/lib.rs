@@ -9,9 +9,12 @@ pub mod check;
 pub mod decisions;
 pub mod git;
 pub mod plan;
+pub mod prompts;
 pub mod report;
+pub mod runner;
 pub mod state;
 pub mod toolchain;
+pub mod unattended;
 
 pub use check::{run_check, CheckKind, CheckOutcome, CheckSpec};
 pub use plan::{Plan, Task};

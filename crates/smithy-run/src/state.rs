@@ -207,6 +207,22 @@ pub struct RunState {
     pub stashes: Vec<String>,
     #[serde(default)]
     pub usage: UsageTotals,
+    #[serde(default)]
+    pub notes: Vec<NoteRecord>,
+}
+
+/// A research Note this Run wrote or reused.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NoteRecord {
+    pub path: String,
+    pub question: String,
+    pub task: Option<String>,
+    pub verified: usize,
+    pub findings: usize,
+    pub answered: Option<f64>,
+    /// Found on file instead of researched again.
+    #[serde(default)]
+    pub reused: bool,
 }
 
 impl RunState {
@@ -234,6 +250,7 @@ impl RunState {
             denied: Vec::new(),
             stashes: Vec::new(),
             usage: UsageTotals::default(),
+            notes: Vec::new(),
         }
     }
 
