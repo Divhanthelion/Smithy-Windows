@@ -333,6 +333,11 @@ impl NoteCheck {
 
 /// Words a quote needs before it identifies anything.
 const MIN_QUOTE_WORDS: usize = 4;
+/// Or characters, for quotes with few spaces — a grammar production or a
+/// document number identifies its source as well as a sentence does. The
+/// first real Run had two good citations of that shape rejected as "too
+/// short" (`([0-9]+(\.[0-9]+)?S)?`, `ISO 8601-1:2019/Amd 1:2022`).
+const MIN_QUOTE_CHARS: usize = 20;
 
 /// Check every finding in `note` against the saved sources and the Project.
 pub fn check_note(note: &str, store: &SourceStore, root: &Path) -> NoteCheck {
@@ -439,11 +444,13 @@ fn check_quotes(quotes: &[String], text: &str) -> Status {
     }
     let haystack = normalize(text);
     for q in quotes {
-        let words = normalize(q)
+        let normalized = normalize(q);
+        let words = normalized
             .split_whitespace()
             .filter(|w| *w != "...")
             .count();
-        if words < MIN_QUOTE_WORDS {
+        let dense = q.chars().filter(|c| !c.is_whitespace()).count();
+        if words < MIN_QUOTE_WORDS && dense < MIN_QUOTE_CHARS {
             return Status::QuoteTooShort(q.clone());
         }
         if !contains_in_order(&haystack, q) {
@@ -740,6 +747,38 @@ mod tests {
         let two = check_note(&note(&[web, repo]), &store, tmp.path());
         assert!(two.passes(), "{}", two.render());
         assert_eq!(two.verified(), 2);
+    }
+
+    /// From the first real Run: dense quotes identify as well as sentences.
+    #[test]
+    fn a_grammar_fragment_is_long_enough_and_a_two_word_phrase_is_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SourceStore::new(tmp.path().join("s"));
+        let page =
+            "the seconds field is ([0-9]+(\\.[0-9]+)?S)? and ISO 8601-1:2019/Amd 1:2022 is listed";
+        let id = store
+            .save(
+                "https://w3.org/x",
+                "https://w3.org/x",
+                200,
+                "text/html",
+                page,
+            )
+            .unwrap()
+            .id;
+        let n = note(&[
+            format!("- [spec] a — https://w3.org/x {{src:{id}}} \"([0-9]+(\\.[0-9]+)?S)?\""),
+            format!("- [spec] b — https://w3.org/x {{src:{id}}} \"ISO 8601-1:2019/Amd 1:2022\""),
+            format!("- [spec] c — https://w3.org/x {{src:{id}}} \"seconds field\""),
+        ]);
+        let s: Vec<Status> = check_note(&n, &store, tmp.path())
+            .findings
+            .into_iter()
+            .map(|c| c.status)
+            .collect();
+        assert_eq!(s[0], Status::Verified, "{:?}", s[0]);
+        assert_eq!(s[1], Status::Verified, "{:?}", s[1]);
+        assert!(matches!(s[2], Status::QuoteTooShort(_)));
     }
 
     #[test]
