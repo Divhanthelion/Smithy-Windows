@@ -5,6 +5,7 @@
 //! Checks, then mechanical rules, then Jev, then the model.
 
 pub mod check;
+pub mod git;
 pub mod toolchain;
 
 pub use check::{run_check, CheckKind, CheckOutcome, CheckSpec};
