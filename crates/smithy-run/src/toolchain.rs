@@ -76,7 +76,7 @@ impl Toolchain {
         Toolchain {
             name: "cmake".into(),
             build: Some("cmake -S . -B build && cmake --build build".into()),
-            test: "cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure"
+            test: "cmake -S . -B build && cmake --build build && ctest --test-dir build -C Debug --output-on-failure"
                 .into(),
             lint: None,
             counter: Counter::Ctest,
