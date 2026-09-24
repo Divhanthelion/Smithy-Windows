@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use smithy_agent::jev::Jev;
 use smithy_agent::{system_prompt, Session, SessionConfig};
 use smithy_project::Project;
+use smithy_run::runlog::LogLevel;
 use smithy_run::runner::{self, Agents, Deps, DesktopNotifier, Judge, NoJudge, Purpose, Runner};
 use smithy_run::state::{Ceilings, RunState};
 use smithy_run::unattended::{DeniedLog, UnattendedShell, UnattendedWrites};
@@ -20,14 +21,36 @@ use smithy_tools::{ToolCtx, Workspace};
 
 use crate::boot::{assemble_registry, prepare, Prepared};
 
+/// How much of a Run to keep for review, and where.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Logging {
+    pub level: LogLevel,
+    pub dir: Option<PathBuf>,
+}
+
+impl Logging {
+    /// `SMITHY_RUN_LOG` (off, events, full; default full) and
+    /// `SMITHY_RUN_LOG_DIR`. Flags override both.
+    fn from_env() -> Result<Logging, String> {
+        let level = match std::env::var("SMITHY_RUN_LOG") {
+            Ok(v) if !v.trim().is_empty() => LogLevel::parse(&v)?,
+            _ => LogLevel::default(),
+        };
+        let dir = std::env::var_os("SMITHY_RUN_LOG_DIR").map(PathBuf::from);
+        Ok(Logging { level, dir })
+    }
+}
+
 pub enum RunCommand {
     Start {
         intent: String,
         ceilings: Ceilings,
+        logging: Logging,
     },
     Resume {
         id: Option<String>,
         allow: Vec<String>,
+        logging: Logging,
     },
     List,
 }
@@ -44,6 +67,12 @@ smithy-agent run --resume [ID] [--allow T3 …]  carry on the newest (or named) 
                                                gives a blocked Task fresh attempts
 smithy-agent runs [--project PATH]             every Run in this Project
 
+--log off|events|full   what to keep for review (default full; SMITHY_RUN_LOG):
+                         events = every request, tool call and check, timed;
+                         full = that plus every conversation in full
+--log-dir DIR            where (default ~/.local/share/smithy/runs/PROJECT/RUN;
+                         SMITHY_RUN_LOG_DIR)
+
 A Run works on its own branch (smithy/run-ID), commits each Task when its
 checks pass, never pushes, and leaves .smithy/runs/ID/REPORT.md.
 "
@@ -52,6 +81,7 @@ checks pass, never pushes, and leaves .smithy/runs/ID/REPORT.md.
 /// `(command, project)` from the words after `run` (or `runs`).
 pub fn parse(list: bool, words: &[String]) -> Result<(RunCommand, PathBuf), String> {
     let mut project = PathBuf::from(".");
+    let mut logging = Logging::from_env()?;
     let mut intent: Option<String> = None;
     let mut resume = false;
     let mut id = None;
@@ -90,6 +120,8 @@ pub fn parse(list: bool, words: &[String]) -> Result<(RunCommand, PathBuf), Stri
                         .map_err(|e| format!("could not read {path}: {e}"))?,
                 );
             }
+            "--log" => logging.level = LogLevel::parse(&value("--log")?)?,
+            "--log-dir" => logging.dir = Some(PathBuf::from(value("--log-dir")?)),
             "--resume" => resume = true,
             "--allow" => allow.push(value("--allow")?),
             flag if flag.starts_with("--") => {
@@ -103,10 +135,14 @@ pub fn parse(list: bool, words: &[String]) -> Result<(RunCommand, PathBuf), Stri
     let cmd = if list {
         RunCommand::List
     } else if resume {
-        RunCommand::Resume { id, allow }
+        RunCommand::Resume { id, allow, logging }
     } else {
         match intent.filter(|i| !i.trim().is_empty()) {
-            Some(intent) => RunCommand::Start { intent, ceilings },
+            Some(intent) => RunCommand::Start {
+                intent,
+                ceilings,
+                logging,
+            },
             None => return Err(format!("what should the Run build?\n\n{}", usage())),
         }
     };
@@ -130,6 +166,10 @@ pub async fn run(cmd: RunCommand, project: &Path) -> Result<(), String> {
         return Ok(());
     }
 
+    let logging = match &cmd {
+        RunCommand::Start { logging, .. } | RunCommand::Resume { logging, .. } => logging.clone(),
+        RunCommand::List => unreachable!(),
+    };
     let prepared = prepare(&project).await?;
     eprintln!(
         "[run] model {} · project {} · web_search {}",
@@ -164,14 +204,16 @@ pub async fn run(cmd: RunCommand, project: &Path) -> Result<(), String> {
         sources: SourceStore::default_location(),
         progress: runner::stderr_progress(),
         guardrail_patience: Duration::from_secs(300),
+        log_level: logging.level,
+        log_dir: logging.dir.clone(),
         supervisor: quick_jev,
     };
 
     let state = match cmd {
-        RunCommand::Start { intent, ceilings } => {
-            Runner::start(&root, &intent, ceilings, deps).await?
-        }
-        RunCommand::Resume { id, allow } => {
+        RunCommand::Start {
+            intent, ceilings, ..
+        } => Runner::start(&root, &intent, ceilings, deps).await?,
+        RunCommand::Resume { id, allow, .. } => {
             Runner::resume(&root, id.as_deref(), &allow, deps).await?
         }
         RunCommand::List => unreachable!(),
@@ -283,7 +325,9 @@ mod tests {
         .unwrap();
         assert_eq!(project, PathBuf::from("p"));
         match cmd {
-            RunCommand::Start { intent, ceilings } => {
+            RunCommand::Start {
+                intent, ceilings, ..
+            } => {
                 assert_eq!(intent, "build a parser");
                 assert_eq!(ceilings.hours, 2);
                 assert_eq!(ceilings.attempts_per_task, 3);
@@ -307,7 +351,7 @@ mod tests {
         )
         .unwrap();
         match cmd {
-            RunCommand::Resume { id, allow } => {
+            RunCommand::Resume { id, allow, .. } => {
                 assert_eq!(id.as_deref(), Some("20260923-1712-3fa9"));
                 assert_eq!(allow, vec!["T3", "intent"]);
             }
@@ -323,5 +367,33 @@ mod tests {
             "two intents is a quoting mistake"
         );
         assert!(matches!(parse(true, &[]).unwrap().0, RunCommand::List));
+    }
+
+    #[test]
+    fn log_flags_and_research_minutes() {
+        let (cmd, _) = parse(
+            false,
+            &words(&[
+                "x",
+                "--log",
+                "events",
+                "--log-dir",
+                "D:/logs",
+                "--research-minutes",
+                "90",
+            ]),
+        )
+        .unwrap();
+        match cmd {
+            RunCommand::Start {
+                ceilings, logging, ..
+            } => {
+                assert_eq!(logging.level, LogLevel::Events);
+                assert_eq!(logging.dir, Some(PathBuf::from("D:/logs")));
+                assert_eq!(ceilings.research_minutes, Some(90));
+            }
+            _ => panic!("not a start"),
+        }
+        assert!(parse(false, &words(&["x", "--log", "loud"])).is_err());
     }
 }

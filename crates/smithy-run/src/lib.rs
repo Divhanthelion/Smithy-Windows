@@ -12,6 +12,7 @@ pub mod observers;
 pub mod plan;
 pub mod prompts;
 pub mod report;
+pub mod runlog;
 pub mod runner;
 pub mod state;
 pub mod toolchain;

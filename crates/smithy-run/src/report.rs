@@ -70,6 +70,13 @@ pub fn render(
         id = state.id,
     ));
 
+    if let Some(dir) = &state.log_dir {
+        out.push_str(&format!(
+            "Logs: `{dir}` — `events.jsonl` (every request, tool call and check, timed) and \
+             `sessions/` (each conversation in full, when logging is `full`).\n\n"
+        ));
+    }
+
     // Needs you — first, because it is why you were woken.
     if !state.flags.is_empty() {
         out.push_str("## Needs you\n\n");

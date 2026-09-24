@@ -1473,6 +1473,8 @@ fn apply_turn_event(panel: &AgentPanelState, event: TurnEvent) {
         TurnEvent::Warning(text) => {
             panel.push(AgentEntry::Notice(text));
         }
+        // Timings are for Run logs; the panel's meters read usage directly.
+        TurnEvent::Completed { .. } => {}
     }
 }
 

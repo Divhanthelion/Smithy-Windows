@@ -43,6 +43,18 @@ pub enum TurnEvent {
         content: String,
         is_error: bool,
     },
+    /// One completion arrived: how long its request took and what it cost.
+    /// For logs that review where a turn's time went.
+    Completed {
+        step: usize,
+        millis: u64,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+        cached_tokens: i64,
+        reasoning_tokens: i64,
+        finish_reason: String,
+        tool_calls: usize,
+    },
     /// A soft ceiling was crossed, or a response had to be retried.
     Warning(String),
 }
@@ -733,7 +745,9 @@ impl Session {
             // the turn. Retrying is safe for the same reason abandoning is:
             // nothing was appended, so the next attempt sends the same bytes.
             let mut attempt = 0;
+            let mut requested: std::time::Instant;
             let completion = loop {
+                requested = std::time::Instant::now();
                 let remaining = budget.remaining();
                 let result = tokio::select! {
                     biased;
@@ -783,6 +797,19 @@ impl Session {
             // First completion locks the scale. Capture before history grows
             // further this turn so the ratio matches what was actually billed.
             self.capture_ledger_calibration(completion.prompt_tokens);
+            emit(
+                events,
+                TurnEvent::Completed {
+                    step: budget.step(),
+                    millis: requested.elapsed().as_millis() as u64,
+                    prompt_tokens: completion.prompt_tokens,
+                    completion_tokens: completion.completion_tokens,
+                    cached_tokens: completion.cached_tokens,
+                    reasoning_tokens: completion.reasoning_tokens,
+                    finish_reason: completion.finish_reason.clone(),
+                    tool_calls: completion.tool_calls.len(),
+                },
+            );
 
             // Capture the reasoning *here*, not in the UI. The panel clears it
             // between turns and never had the whole of it anyway; this is the

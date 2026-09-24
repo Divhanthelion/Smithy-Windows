@@ -225,6 +225,9 @@ pub struct RunState {
     /// Seconds of research spent so far, against the Run's research budget.
     #[serde(default)]
     pub research_seconds: u64,
+    /// Where this Run's events and transcripts are kept, if anywhere.
+    #[serde(default)]
+    pub log_dir: Option<String>,
 }
 
 /// A research Note this Run wrote or reused.
@@ -268,6 +271,7 @@ impl RunState {
             usage: UsageTotals::default(),
             notes: Vec::new(),
             research_seconds: 0,
+            log_dir: None,
         }
     }
 

@@ -20,6 +20,7 @@ use crate::git::Git;
 use crate::plan::{planner_prompt, read_planner_reply, Depth, Plan, PlannerReply, Task};
 use crate::prompts;
 use crate::report::{self, NoteLine};
+use crate::runlog::{LogLevel, RunLog, SessionLabel};
 use crate::state::{
     run_dir, unix_now, utc_date, write_atomic, Baseline, Ceilings, Flag, InFlight, NoteRecord,
     RunState, TaskStatus, Verdict,
@@ -124,6 +125,10 @@ pub struct Deps {
     /// Watches every turn for loops and early stops, and logs each check to
     /// the Run's decisions. `None` without a key.
     pub supervisor: Option<Arc<Jev>>,
+    /// How much of the Run to keep for review, and where. `None` is the
+    /// default place outside the Project; see [`crate::runlog`].
+    pub log_level: LogLevel,
+    pub log_dir: Option<PathBuf>,
 }
 
 pub struct Runner {
@@ -138,6 +143,7 @@ pub struct Runner {
     elapsed_before: u64,
     /// Consecutive model-endpoint failures; two ends the Run.
     provider_failures: usize,
+    runlog: Arc<RunLog>,
 }
 
 /// How a round of work ended.
@@ -150,6 +156,7 @@ enum RoundEnd {
 struct Worker {
     session: Session,
     counted: smithy_agent::Usage,
+    label: SessionLabel,
 }
 
 /// How an Attempt ended.
@@ -207,7 +214,9 @@ impl Runner {
             started: Instant::now(),
             elapsed_before: 0,
             provider_failures: 0,
+            runlog: Arc::new(RunLog::off()),
         };
+        runner.open_log();
         runner.say(&format!("run {id} on {branch}"));
         runner.save();
         runner.drive().await;
@@ -287,7 +296,9 @@ impl Runner {
             started: Instant::now(),
             elapsed_before,
             provider_failures: 0,
+            runlog: Arc::new(RunLog::off()),
         };
+        runner.open_log();
         runner.say(&format!("resuming run {id}"));
         runner.save();
         runner.drive().await;
@@ -450,6 +461,7 @@ impl Runner {
         };
         self.say("baseline: running the full suite");
         let out = run_check(&spec, &self.state.toolchain, &self.root, CHECK_TIMEOUT);
+        self.log_check(None, &out);
         self.state.baseline = Some(match out.tests {
             Some(t) => Baseline {
                 passed: t.passed,
@@ -847,6 +859,7 @@ impl Runner {
         let mut outcomes = Vec::new();
         for spec in &task.checks {
             let o = run_check(spec, &tc, &self.root, CHECK_TIMEOUT);
+            self.log_check(Some(&task.id), &o);
             let passed = o.passed;
             outcomes.push(o);
             if !passed {
@@ -873,6 +886,7 @@ impl Runner {
                     o.verdict = format!("{} (no regression from the Baseline)", o.verdict);
                 }
             }
+            self.log_check(Some(&task.id), &o);
             outcomes.push(o);
         }
         self.state.task(&task.id).last_checks = outcomes.clone();
@@ -1338,10 +1352,57 @@ impl Runner {
             });
             session.observe(Arc::new(jev::Supervisor::new(jev.clone()).with_log(sink)));
         }
+        let name = match purpose {
+            Purpose::Plan => "plan".to_string(),
+            Purpose::Build { task } => format!(
+                "build-{task}-a{}",
+                self.state.tasks.get(task).map(|t| t.attempts).unwrap_or(0)
+            ),
+            Purpose::Research { task, depth } => format!(
+                "research-{}-{}",
+                task.as_deref().unwrap_or("run"),
+                depth.name()
+            ),
+        };
+        let label = self.runlog.session_started(&name);
         Ok(Worker {
             session,
             counted: smithy_agent::Usage::default(),
+            label,
         })
+    }
+
+    /// The Run's log, in the directory the state already names (a resume
+    /// keeps writing where the Run started), or the one `Deps` asks for.
+    fn open_log(&mut self) {
+        let dir = self
+            .state
+            .log_dir
+            .clone()
+            .map(PathBuf::from)
+            .or_else(|| self.deps.log_dir.as_ref().map(|d| d.join(&self.state.id)))
+            .or_else(|| RunLog::default_dir(&self.root, &self.state.id));
+        let Some(dir) = dir else { return };
+        let log = RunLog::new(self.deps.log_level, &dir);
+        self.state.log_dir = log.dir().map(|d| d.to_string_lossy().into_owned());
+        log.event(
+            "run",
+            serde_json::json!({ "id": self.state.id, "level": self.deps.log_level }),
+        );
+        self.runlog = Arc::new(log);
+    }
+
+    /// A Check's result in the log, with how long it took.
+    fn log_check(&self, task: Option<&str>, o: &CheckOutcome) {
+        self.runlog.event(
+            "check",
+            serde_json::json!({
+                "task": task, "run": o.spec.run, "passed": o.passed, "verdict": o.verdict,
+                "seconds": o.seconds,
+                "tests_passed": o.tests.as_ref().map(|t| t.passed),
+                "tests_failed": o.tests.as_ref().map(|t| t.failed),
+            }),
+        );
     }
 
     /// Add what this Session spent since it was last counted.
@@ -1365,7 +1426,10 @@ impl Runner {
         session: &mut Worker,
         message: &str,
     ) -> Result<Option<String>, Verdict> {
-        let result = session.session.run_turn(message, None).await;
+        let sink = self.runlog.sink(&session.label);
+        let result = session.session.run_turn(message, Some(&sink)).await;
+        self.runlog
+            .save_session(&session.label, &session.session, &self.root);
         self.bill(session);
         self.drain_denied();
         match result {
@@ -1453,6 +1517,8 @@ impl Runner {
     }
 
     fn say(&self, line: &str) {
+        self.runlog
+            .event("progress", serde_json::json!({ "text": line }));
         (self.deps.progress)(line);
     }
 

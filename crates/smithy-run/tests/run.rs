@@ -186,6 +186,8 @@ fn harness(root: &Path, script: Vec<Completion>) -> Harness {
         progress: Arc::new(|l: &str| eprintln!("[run] {l}")),
         guardrail_patience: Duration::ZERO,
         supervisor: None,
+        log_level: smithy_run::runlog::LogLevel::Off,
+        log_dir: None,
     };
     Harness {
         agents,
@@ -674,4 +676,108 @@ fn the_research_budget_scales_with_the_runs_hours() {
         ..Ceilings::default()
     };
     assert_eq!(fixed.research_budget(), 90 * 60);
+}
+
+/// From the first real Run's post-mortem: its conversations were gone. At
+/// `full` a Run keeps a timed event line for every request, tool call and
+/// check, and every Session's whole conversation, outside the Project.
+#[tokio::test]
+async fn a_full_log_keeps_the_timeline_and_every_conversation() {
+    let tmp = project();
+    let root = tmp.path();
+    let logs = tempfile::tempdir().unwrap();
+    let mut h = harness(
+        root,
+        vec![
+            answer(PLAN),
+            write("c1", "src.txt", "nothing yet"),
+            answer("Wrote the parser."),
+            write("c2", "src.txt", "fn parse() {}"),
+            answer("Fixed."),
+        ],
+    );
+    h.deps.log_level = smithy_run::runlog::LogLevel::Full;
+    h.deps.log_dir = Some(logs.path().to_path_buf());
+
+    let state = Runner::start(root, "build a parser", Ceilings::default(), h.deps.clone())
+        .await
+        .unwrap();
+    assert_eq!(state.verdict, Some(Verdict::Done), "{:?}", state.verdict);
+
+    let dir = logs.path().join(&state.id);
+    assert_eq!(
+        state.log_dir.as_deref().map(std::path::PathBuf::from),
+        Some(dir.clone())
+    );
+    let events: Vec<serde_json::Value> = std::fs::read_to_string(dir.join("events.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let count = |k: &str| events.iter().filter(|e| e["kind"] == k).count();
+    assert_eq!(count("run"), 1);
+    assert_eq!(count("session"), 2, "plan and one build Session");
+    assert_eq!(count("request"), 5, "one line per completion");
+    assert_eq!(count("tool"), 2);
+    assert_eq!(count("tool_done"), 2);
+    assert!(
+        count("check") >= 3,
+        "baseline and both rounds: {}",
+        count("check")
+    );
+    assert!(count("progress") >= 4);
+    let first_check = events
+        .iter()
+        .find(|e| e["kind"] == "check" && e["task"] == "T1")
+        .unwrap();
+    assert_eq!(first_check["passed"], false);
+    assert!(
+        events
+            .windows(2)
+            .all(|w| w[0]["t"].as_u64() <= w[1]["t"].as_u64()),
+        "in time order"
+    );
+
+    let mut sessions: Vec<String> = std::fs::read_dir(dir.join("sessions"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    sessions.sort();
+    assert_eq!(sessions, ["01-plan.json", "02-build-T1-a1.json"]);
+    let build: smithy_agent::persist::StoredSession = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("sessions/02-build-T1-a1.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        build.messages.len() >= 6,
+        "the whole conversation: {}",
+        build.messages.len()
+    );
+
+    let report =
+        std::fs::read_to_string(root.join(".smithy/runs").join(&state.id).join("REPORT.md"))
+            .unwrap();
+    assert!(report.contains("Logs: `"), "the report says where");
+}
+
+#[tokio::test]
+async fn logging_off_leaves_nothing_behind() {
+    let tmp = project();
+    let root = tmp.path();
+    let logs = tempfile::tempdir().unwrap();
+    let mut h = harness(
+        root,
+        vec![
+            answer(PLAN),
+            write("c1", "src.txt", "fn parse() {}"),
+            answer("Done."),
+        ],
+    );
+    h.deps.log_dir = Some(logs.path().to_path_buf());
+    let state = Runner::start(root, "x", Ceilings::default(), h.deps.clone())
+        .await
+        .unwrap();
+    assert_eq!(state.verdict, Some(Verdict::Done));
+    assert!(state.log_dir.is_none());
+    assert_eq!(std::fs::read_dir(logs.path()).unwrap().count(), 0);
 }

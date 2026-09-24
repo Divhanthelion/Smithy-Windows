@@ -322,6 +322,7 @@ fn sink(event: TurnEvent) {
             eprintln!("      {} {first}", if is_error { "✗" } else { "→" });
         }
         TurnEvent::Warning(w) => eprintln!("  ⚠ {w}"),
+        TurnEvent::Completed { .. } => {}
     }
 }
 
