@@ -31,6 +31,14 @@ use crate::unattended::DeniedLog;
 /// Where the runner's own files live, relative to the Project.
 pub const RUNS_DIR: &str = ".smithy/runs/";
 
+/// The longest a build turn runs before the runner checks the work.
+///
+/// Not a limit on the work: a turn that ends here is checked, and the
+/// attempt carries on in the same conversation with what the checks said.
+/// The first real Run's 57-minute turn is what this prevents — an hour with
+/// no checkpoint, and nobody steering.
+pub const BUILD_TURN_SECONDS: u64 = 20 * 60;
+
 /// Never stashed with an interrupted attempt: the Run's records and its
 /// research Notes are worth keeping whatever became of the code.
 const KEEP_ON_STASH: &str = ".smithy/";
@@ -677,6 +685,15 @@ impl Runner {
                 task: task.id.clone(),
             })
             .await?;
+        session.session.observe(Arc::new(
+            crate::observers::StopWhenGreen::new(
+                task.checks.clone(),
+                self.state.toolchain.clone(),
+                self.root.clone(),
+                crate::observers::CHECK_EVERY,
+            )
+            .with_log(self.runlog.clone(), &task.id),
+        ));
         let own = self.state.task(&task.id).notes.clone();
         let notes: Vec<(String, String)> = self
             .state

@@ -50,7 +50,9 @@ pub fn task_prompt(
     }
     out.push_str(
         "\n## How to work\n\n\
-         - This task only. Later tasks have their own turn.\n\
+         - This task only. Later tasks have their own turn. The runner runs this task's checks \
+         as you go and ends the turn the first time they pass, so build what they need and nothing \
+         more.\n\
          - Do not use git to change anything (commit, checkout, reset, stash…): the runner commits \
          when the checks pass. Read-only git is fine.\n\
          - Do not edit `.smithy/runs/`.\n\

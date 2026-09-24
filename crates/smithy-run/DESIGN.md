@@ -212,6 +212,13 @@ leaves one:
   (0.5); answered 0.63–0.71 vs 0.03–0.06 (0.35); next move 5/5 acceptable,
   with "compact near a full window" the one low-confidence pick, which is
   why that move is a rule; guardrail allow side 0.02–0.05 (0.3).
+- **A build turn ends when its Task's checks pass** (post-mortem #9: one
+  57-minute turn wrote later Tasks' work and polished it before anything was
+  checked). After the model changes a file, the Task's own checks run every
+  6 tool calls, silently; the first time they pass the turn stops and the
+  runner does its full round (suite against the Baseline, cheat rules). A
+  build turn also returns to the runner after 20 minutes. That bounds the
+  turn, not the work: the attempt continues in the same conversation.
 
 ## Build order
 

@@ -13,7 +13,9 @@ use smithy_agent::jev::Jev;
 use smithy_agent::{system_prompt, Session, SessionConfig};
 use smithy_project::Project;
 use smithy_run::runlog::LogLevel;
-use smithy_run::runner::{self, Agents, Deps, DesktopNotifier, Judge, NoJudge, Purpose, Runner};
+use smithy_run::runner::{
+    self, Agents, Deps, DesktopNotifier, Judge, NoJudge, Purpose, Runner, BUILD_TURN_SECONDS,
+};
 use smithy_run::state::{Ceilings, RunState};
 use smithy_run::unattended::{DeniedLog, UnattendedShell, UnattendedWrites};
 use smithy_tools::research::{SourceStore, NOTES_DIR};
@@ -297,7 +299,8 @@ impl Agents for CliAgents {
         // A research turn is as long as its question deserves.
         config.limits.max_seconds = match purpose {
             Purpose::Research { depth, .. } => depth.minutes() * 60,
-            _ => p.turn_seconds,
+            Purpose::Build { .. } => p.turn_seconds.min(BUILD_TURN_SECONDS),
+            Purpose::Plan => p.turn_seconds,
         };
         Ok(Session::new(
             p.provider.clone(),
