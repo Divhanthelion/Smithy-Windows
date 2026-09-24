@@ -164,6 +164,15 @@ impl LmStudio {
     }
 
     /// The request body. Always streamed — see [`LmStudio::complete`].
+    ///
+    /// No `max_tokens`: a local server then allows whatever the context has
+    /// room for. A fixed cap was the costliest limit in the second real Run —
+    /// Qwen3.8 thought for 16k tokens designing a file and was cut off before
+    /// writing it, three times — and a number large enough to be safe is one
+    /// vLLM refuses once the prompt is long. A reply that runs away is still
+    /// ended by the turn's clock and its grace (see [`Limits`]).
+    ///
+    /// [`Limits`]: crate::limits::Limits
     fn build_body(&self, request: &CompletionRequest<'_>) -> Value {
         let stream = true;
         let s: &Sampling = request.sampling;
@@ -178,7 +187,6 @@ impl LmStudio {
             "min_p": s.min_p,
             "repetition_penalty": s.repetition_penalty,
             "presence_penalty": s.presence_penalty,
-            "max_tokens": s.max_tokens,
         });
         let _ = stream;
         // Without this the final chunk carries no usage block, and the context

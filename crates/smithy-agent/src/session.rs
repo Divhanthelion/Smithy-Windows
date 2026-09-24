@@ -748,7 +748,11 @@ impl Session {
             let mut requested: std::time::Instant;
             let completion = loop {
                 requested = std::time::Instant::now();
-                let remaining = budget.remaining();
+                // A reply that has started may finish inside the grace; the
+                // turn then stops at the top of the loop, after its tool calls
+                // have run. Cutting it off mid-stream throws it all away.
+                let remaining =
+                    budget.remaining() + Duration::from_secs(self.limits.reply_grace_seconds);
                 let result = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => {
@@ -861,11 +865,15 @@ impl Session {
                         }
                         self.history
                             .push(Message::assistant(completion.content.clone()));
-                        self.history.push(Message::user(format!(
-                            "Your previous response {why}. You may have gotten stuck repeating \
-                             yourself. Give ONLY the final answer now, in one or two short \
-                             sentences, then stop — do not re-verify or restate."
-                        )));
+                        self.history.push(Message::user(if truncated {
+                            cut_off_note()
+                        } else {
+                            format!(
+                                "Your previous response {why}. You may have gotten stuck \
+                                 repeating yourself. Give ONLY the final answer now, in one or \
+                                 two short sentences, then stop — do not re-verify or restate."
+                            )
+                        }));
                         continue;
                     }
 
@@ -910,9 +918,8 @@ impl Session {
                          Re-issue it as a single structured function call."
                     );
                     if completion.was_truncated() {
-                        note.push_str(
-                            "\n(Your response was cut off by the length limit — be more concise.)",
-                        );
+                        note.push_str("\n\n");
+                        note.push_str(&cut_off_note());
                     }
                     self.history.push(Message::user(note));
                 }
@@ -1077,6 +1084,22 @@ fn is_transient(error: &ProviderError) -> bool {
         ProviderError::BadResponse(message) => message.starts_with("stream read error"),
         _ => false,
     }
+}
+
+/// What the model is told when its reply ran out of room.
+///
+/// This used to ask for the final answer in two sentences, which suits a model
+/// repeating "Done." until the limit. The second real Run showed the
+/// other case: Qwen3.8 designed a whole file in 16k tokens of thinking and
+/// was cut off before writing it, three times. Its thinking is not sent back,
+/// so it cannot pick up where it stopped; what helps is a smaller next step.
+fn cut_off_note() -> String {
+    "Your previous reply ran out of room before it finished, and everything in it — \
+     your thinking included — is gone. Do not plan the whole change again in one \
+     reply. Take the next concrete step now: one tool call (write or edit one file, \
+     or one part of a large file), then continue step by step. If the work is \
+     already done, give a short final answer."
+        .to_string()
 }
 
 fn emit(events: Option<&EventSink>, event: TurnEvent) {
@@ -1432,6 +1455,7 @@ mod tests {
         let provider = Arc::new(HangingProvider::new());
         let mut config = SessionConfig::new("test prompt");
         config.limits.max_seconds = 1;
+        config.limits.reply_grace_seconds = 1;
         let mut session = Session::new(
             provider.clone(),
             Arc::new(Registry::core()),
@@ -1456,6 +1480,81 @@ mod tests {
             1,
             "the request must have started; otherwise this is just tick() at the loop top"
         );
+    }
+
+    /// A reply still being generated when the clock runs out is not thrown
+    /// away: it finishes inside the grace, its tool calls run, and the turn
+    /// stops before the next request.
+    #[tokio::test]
+    async fn a_reply_in_flight_at_the_time_limit_finishes_and_its_calls_run() {
+        use crate::provider::test_support::{tool_call, ScriptedProvider, SlowProvider};
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), "x\n").unwrap();
+        let ws = Workspace::open(tmp.path()).unwrap();
+        let provider = Arc::new(SlowProvider {
+            delay: Duration::from_millis(1500),
+            inner: ScriptedProvider::new(vec![tool_call(
+                "c1",
+                "write",
+                r#"{"path":"out.txt","content":"kept\n"}"#,
+            )]),
+        });
+        let mut config = SessionConfig::new("test prompt");
+        config.limits.max_seconds = 1;
+        config.limits.reply_grace_seconds = 10;
+        let mut session = Session::new(
+            provider.clone(),
+            Arc::new(Registry::core()),
+            Arc::new(ToolCtx::new(ws)),
+            config,
+        );
+
+        let outcome = session.run_turn("write it", None).await.unwrap();
+
+        assert!(
+            matches!(&outcome, Outcome::Stopped(r) if r.contains("time limit reached")),
+            "got {outcome:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("out.txt")).unwrap(),
+            "kept\n",
+            "the late reply's write must have landed"
+        );
+        assert_eq!(provider.inner.call_count(), 1, "no request after the limit");
+    }
+
+    /// A reply that ran out of room is told to take a smaller step, not to
+    /// wrap up: the second real Run's cut-off replies were designing a file.
+    #[tokio::test]
+    async fn a_cut_off_reply_is_told_to_take_the_next_step() {
+        use crate::provider::test_support::{answer, truncated, ScriptedProvider};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = Workspace::open(tmp.path()).unwrap();
+        let provider = Arc::new(ScriptedProvider::new(vec![
+            truncated("Let me design the whole parser first"),
+            answer("done"),
+        ]));
+        let mut session = Session::new(
+            provider.clone(),
+            Arc::new(Registry::core()),
+            Arc::new(ToolCtx::new(ws)),
+            SessionConfig::new("test prompt"),
+        );
+
+        session.run_turn("build it", None).await.unwrap();
+
+        let told = session
+            .history()
+            .messages()
+            .iter()
+            .rev()
+            .find(|m| m.role == crate::message::Role::User && m.content.contains("ran out of room"))
+            .map(|m| m.content.clone())
+            .expect("the model is told its reply was cut off");
+        assert!(told.contains("next concrete step"), "{told}");
+        assert!(!told.contains("ONLY the final answer"), "{told}");
     }
 
     /// The invariant that makes a stopped turn resumable. Once the assistant

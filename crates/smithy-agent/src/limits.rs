@@ -38,6 +38,17 @@ pub struct Limits {
     /// eight percent of a million tokens is a cap that never fires.
     #[serde(default = "default_tool_result_warn_chars")]
     pub tool_result_warn_chars: usize,
+    /// How long a reply already being generated may run past `max_seconds`.
+    ///
+    /// The turn's clock stops the turn at the next step, not mid-reply: a
+    /// reply cut off in flight is thrown away whole, and on a local model
+    /// that was minutes of work. This bounds how long the clock waits for it.
+    #[serde(default = "default_reply_grace_seconds")]
+    pub reply_grace_seconds: u64,
+}
+
+fn default_reply_grace_seconds() -> u64 {
+    900
 }
 
 fn default_tool_result_warn_chars() -> usize {
@@ -68,6 +79,7 @@ impl Default for Limits {
             context_hard: 110_000,
             max_parse_retries: 3,
             tool_result_warn_chars: default_tool_result_warn_chars(),
+            reply_grace_seconds: default_reply_grace_seconds(),
         }
     }
 }
@@ -267,6 +279,7 @@ mod tests {
             context_hard: 200,
             max_parse_retries: 3,
             tool_result_warn_chars: 1_000,
+            reply_grace_seconds: 0,
         }
     }
 

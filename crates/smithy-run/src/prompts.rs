@@ -27,7 +27,10 @@ pub fn task_prompt(
          Attempt {attempt} of {max_attempts}.\n\n\
          ## Done means these pass\n\nThe runner runs them itself after you answer; your word \
          that they pass is not enough.\n\n{}\n\nThe full suite (`{}`) must also keep passing, and \
-         tests that existed before this Run may not be weakened, skipped or deleted.\n",
+         tests that existed before this Run may not be weakened, skipped or deleted. Tests an \
+         earlier Task of this Run wrote are not protected: when this Task changes the behaviour \
+         they pin (a case they said is rejected that this Task must accept), update them and say \
+         so in your answer.\n",
         plan.intent.trim(),
         plan.render(done),
         task.id,

@@ -348,6 +348,31 @@ pub mod test_support {
         }
     }
 
+    /// Replays a script, each reply after a delay: a local model that takes
+    /// its time.
+    pub struct SlowProvider {
+        pub delay: std::time::Duration,
+        pub inner: ScriptedProvider,
+    }
+
+    #[async_trait]
+    impl Provider for SlowProvider {
+        fn name(&self) -> &str {
+            "slow"
+        }
+        fn model(&self) -> &str {
+            "test-model"
+        }
+        async fn complete(
+            &self,
+            request: CompletionRequest<'_>,
+            on_delta: Option<&(dyn Fn(Delta) + Send + Sync)>,
+        ) -> Result<Completion, ProviderError> {
+            tokio::time::sleep(self.delay).await;
+            self.inner.complete(request, on_delta).await
+        }
+    }
+
     pub fn answer(text: &str) -> Completion {
         Completion {
             content: text.into(),
