@@ -588,30 +588,34 @@ fn decision_log(root: &Path, state: &RunState) -> String {
 
 const TWO_QUESTIONS: &str = "why = \"the whole intent\"\nresearch = [{ question = \"Is P1W2D legal?\", depth = \"lookup\", why = \"the week rule\" }, \"Which designators exist?\"]\n";
 
-/// Research is not capped by count: a question the model can answer now is
-/// filtered out by Jev, one it cannot is researched at the depth the plan
-/// gave it.
+/// Jev reports; it does not gate. Every question the plan asked is
+/// researched, at the depth the plan gave it, and Jev's "needed outside
+/// sources?" rides along on the Note and in the Report.
 #[tokio::test]
-async fn questions_are_filtered_by_need_and_researched_at_their_depth() {
+async fn every_planned_question_is_researched_and_jevs_numbers_are_reported() {
     let tmp = project();
     let root = tmp.path();
     let plan = PLAN.replace("why = \"the whole intent\"\n", TWO_QUESTIONS);
-    let note = smithy_run::prompts::note_path(
-        &smithy_run::state::utc_date(smithy_run::state::unix_now()),
-        Some("T1"),
-        "Is P1W2D legal?",
-    );
+    let date = smithy_run::state::utc_date(smithy_run::state::unix_now());
+    let note1 = smithy_run::prompts::note_path(&date, Some("T1"), "Is P1W2D legal?");
+    let note2 = smithy_run::prompts::note_path(&date, Some("T1"), "Which designators exist?");
     let h = harness(
         root,
         vec![
             answer(&plan),
-            write("r1", &note, "# Is P1W2D legal?\n\n**Status:** verified\n"),
+            write("r1", &note1, "# Is P1W2D legal?\n\n**Status:** verified\n"),
+            answer("Wrote the note."),
+            write(
+                "r2",
+                &note2,
+                "# Which designators exist?\n\n**Status:** verified\n",
+            ),
             answer("Wrote the note."),
             write("c1", "src.txt", "fn parse() {}"),
             answer("Done."),
         ],
     );
-    // Jev: the first question needs sources, the second does not.
+    // Jev thinks the second question needed no sources. It is researched anyway.
     h.judge.research_queue.lock().unwrap().extend([0.9, 0.05]);
 
     let state = Runner::start(root, "build a parser", Ceilings::default(), h.deps.clone())
@@ -619,14 +623,33 @@ async fn questions_are_filtered_by_need_and_researched_at_their_depth() {
         .unwrap();
 
     assert_eq!(state.verdict, Some(Verdict::Done), "{:?}", state.verdict);
+    use smithy_run::plan::Depth;
     assert_eq!(
         research_sessions(&h),
-        vec![Purpose::Research {
-            task: Some("T1".into()),
-            depth: smithy_run::plan::Depth::Lookup
-        }]
+        vec![
+            Purpose::Research {
+                task: Some("T1".into()),
+                depth: Depth::Lookup
+            },
+            Purpose::Research {
+                task: Some("T1".into()),
+                depth: Depth::Decision
+            },
+        ]
     );
-    assert!(decision_log(root, &state).contains("skip: answerable without sources"));
+    let needs: Vec<Option<f64>> = state.notes.iter().map(|n| n.need).collect();
+    assert_eq!(needs, vec![Some(0.9), Some(0.05)]);
+    let log = decision_log(root, &state);
+    assert!(!log.contains("skip:"), "nothing is skipped on Jev's say-so");
+    assert!(log.contains("report: researched as the plan asked"));
+    let report =
+        std::fs::read_to_string(root.join(".smithy/runs").join(&state.id).join("REPORT.md"))
+            .unwrap();
+    assert!(
+        report.contains("| Needed sources | Answers it |"),
+        "{report}"
+    );
+    assert!(report.contains("| 0.05 |"), "{report}");
 }
 
 /// The Run's research budget holds whoever asks: past it, a Task is built

@@ -20,6 +20,8 @@ pub struct NoteLine {
     pub verified: usize,
     pub findings: usize,
     pub answered: Option<f64>,
+    /// Jev, before researching: did it need outside sources?
+    pub need: Option<f64>,
 }
 
 pub fn render(
@@ -189,17 +191,23 @@ pub fn render(
     }
 
     if !notes.is_empty() {
-        out.push_str("## Research\n\n| Note | Question | Verified findings | Answered |\n|---|---|---|---|\n");
+        out.push_str(
+            "## Research\n\nJev's two numbers are reported, not acted on: how likely the \
+             question needed outside sources, asked before researching, and how likely the Note \
+             answers it, asked after.\n\n\
+             | Note | Question | Verified findings | Needed sources | Answers it |\n\
+             |---|---|---|---|---|\n",
+        );
+        let p = |v: Option<f64>| v.map(|p| format!("{p:.2}")).unwrap_or_else(|| "—".into());
         for n in notes {
             out.push_str(&format!(
-                "| `{}` | {} | {}/{} | {} |\n",
+                "| `{}` | {} | {}/{} | {} | {} |\n",
                 n.path,
                 escape_cell(&n.question),
                 n.verified,
                 n.findings,
-                n.answered
-                    .map(|p| format!("{p:.2}"))
-                    .unwrap_or_else(|| "—".into())
+                p(n.need),
+                p(n.answered),
             ));
         }
         out.push('\n');

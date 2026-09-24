@@ -553,33 +553,30 @@ impl Runner {
         self.state.task(&task.id).status = TaskStatus::Active;
         self.save();
 
-        // Research first. Each question the plan asked is put to Jev ("does
-        // this need outside sources?"), so what the model could answer now is
-        // not researched; with no questions, Jev is asked about the Task as a
-        // whole. Unanswered, research goes ahead: thoroughness is the side to
-        // err on, and the Run's research budget still bounds it.
+        // Research what the plan asked for. Jev does not decide that: its
+        // "does this need outside sources?" is a probability, and it is
+        // reported beside each Note (and, for a Task the plan gave no
+        // questions, in the log and the Report) rather than turned into a
+        // skip. The Run's research budget is what bounds research.
         let checks = task.render_checks();
-        let mut questions: Vec<(String, Depth)> = Vec::new();
+        let mut questions: Vec<(String, Depth, Option<f64>)> = Vec::new();
         if task.research.is_empty() {
             let st = jev::research_state(&plan.intent, &task.title, &task.why, &checks);
-            if self.needs_research(&task.id, &st).await {
-                questions.push((prompts::implied_question(task), Depth::Decision));
-            }
+            self.research_need(&task.id, &st, false).await;
         } else {
             for item in &task.research {
                 let q = item.question().to_string();
-                if self.already_researched(&task.id, &q).is_some() {
-                    questions.push((q, item.depth()));
-                    continue;
-                }
-                let why = format!("{}\nThe question: {q}", task.why);
-                let st = jev::research_state(&plan.intent, &task.title, &why, &checks);
-                if self.needs_research(&task.id, &st).await {
-                    questions.push((q, item.depth()));
-                }
+                let need = if self.already_researched(&task.id, &q).is_some() {
+                    None
+                } else {
+                    let why = format!("{}\nThe question: {q}", task.why);
+                    let st = jev::research_state(&plan.intent, &task.title, &why, &checks);
+                    self.research_need(&task.id, &st, true).await
+                };
+                questions.push((q, item.depth(), need));
             }
         }
-        for (q, depth) in questions {
+        for (q, depth, need) in questions {
             // Researched by this Run already (a resume, or a crash after the
             // note was written): read it, whatever its status says. A second
             // pass cost the second real Run half an hour for nothing.
@@ -591,7 +588,7 @@ impl Runner {
                 }
                 continue;
             }
-            if let Some(path) = self.research(&q, depth, Some(task)).await? {
+            if let Some(path) = self.research(&q, depth, need, Some(task)).await? {
                 let t = self.state.task(&task.id);
                 if !t.notes.contains(&path) {
                     t.notes.push(path);
@@ -808,7 +805,7 @@ impl Runner {
                         .as_ref()
                         .map(|f| prompts::failure_question(task, f))
                         .unwrap_or_else(|| prompts::implied_question(task));
-                    let extra = match self.research(&q, Depth::Decision, Some(task)).await? {
+                    let extra = match self.research(&q, Depth::Decision, None, Some(task)).await? {
                         Some(path) => {
                             self.state.task(&task.id).notes.push(path.clone());
                             format!("{note}\n\nResearch on this failure is in `{path}` — read it first.")
@@ -1102,13 +1099,19 @@ impl Runner {
         AttemptEnd::Handoff
     }
 
-    /// Jev's "does this need outside sources?", logged. Unanswered, yes.
-    async fn needs_research(&mut self, task: &str, state: &str) -> bool {
+    /// Jev's "does this need outside sources?", recorded and returned. A
+    /// report, not a gate: nothing is skipped or added on it.
+    async fn research_need(&mut self, task: &str, state: &str, asked: bool) -> Option<f64> {
         let answer = self.deps.judge.needs_research(state).await;
-        let research = match &answer {
-            Ok(p) => *p >= jev::RESEARCH_THRESHOLD,
-            Err(_) => true,
-        };
+        let p = answer.as_ref().ok().copied();
+        if !asked {
+            if let Some(p) = p.filter(|p| *p >= jev::RESEARCH_THRESHOLD) {
+                self.say(&format!(
+                    "{task}: the plan asked no research questions; Jev puts the need for \
+                     outside sources at {p:.2}"
+                ));
+            }
+        }
         self.record(Draft {
             task: Some(task),
             attempt: None,
@@ -1117,14 +1120,14 @@ impl Runner {
             answer: answer
                 .map(Answer::Probability)
                 .unwrap_or_else(Answer::Unavailable),
-            threshold: Some(jev::RESEARCH_THRESHOLD),
-            action: if research {
-                "research"
+            threshold: None,
+            action: if asked {
+                "report: researched as the plan asked"
             } else {
-                "skip: answerable without sources"
+                "report: the plan asked for none"
             },
         });
-        research
+        p
     }
 
     /// The Note this Run already wrote for `question` on `task`, if it is
@@ -1146,6 +1149,7 @@ impl Runner {
         &mut self,
         question: &str,
         depth: Depth,
+        need: Option<f64>,
         task: Option<&Task>,
     ) -> Result<Option<String>, Verdict> {
         let task_id = task.map(|t| t.id.clone());
@@ -1186,6 +1190,7 @@ impl Runner {
                             findings: check.as_ref().map(|c| c.findings.len()).unwrap_or(0),
                             answered: answer.ok(),
                             reused: true,
+                            need,
                         });
                         return Ok(Some(meta.path));
                     }
@@ -1211,7 +1216,7 @@ impl Runner {
             return Ok(None);
         }
         let started = Instant::now();
-        let out = self.run_research(question, depth, task).await;
+        let out = self.run_research(question, depth, need, task).await;
         self.state.research_seconds += started.elapsed().as_secs();
         self.save();
         out
@@ -1221,6 +1226,7 @@ impl Runner {
         &mut self,
         question: &str,
         depth: Depth,
+        need: Option<f64>,
         task: Option<&Task>,
     ) -> Result<Option<String>, Verdict> {
         let task_id = task.map(|t| t.id.clone());
@@ -1278,7 +1284,6 @@ impl Runner {
             let text = std::fs::read_to_string(self.root.join(&path)).unwrap_or(text);
             let st = jev::answered_state(question, &text);
             let answer = self.deps.judge.answered(&st).await;
-            let ok = matches!(answer, Ok(p) if p >= jev::ANSWERED_THRESHOLD);
             answered = answer.clone().ok();
             self.record(Draft {
                 task: task_id.as_deref(),
@@ -1288,10 +1293,10 @@ impl Runner {
                 answer: answer
                     .map(Answer::Probability)
                     .unwrap_or_else(Answer::Unavailable),
-                threshold: Some(jev::ANSWERED_THRESHOLD),
-                // One judgement, no second pass: a thin note is kept and
-                // marked, and the Task's own tests remain the ground truth.
-                action: if ok { "accept" } else { "keep, marked partial" },
+                threshold: None,
+                // Reported beside the Note, not acted on: the Note is kept
+                // either way, and the Task's own tests are the ground truth.
+                action: "report",
             });
             break;
         }
@@ -1305,6 +1310,7 @@ impl Runner {
             findings: check.as_ref().map(|c| c.findings.len()).unwrap_or(0),
             answered,
             reused: false,
+            need,
         });
         self.save();
         Ok(Some(path))
@@ -1538,6 +1544,7 @@ impl Runner {
                 verified: n.verified,
                 findings: n.findings,
                 answered: n.answered,
+                need: n.need,
             })
             .collect();
         let text = report::render(&self.state, self.plan.as_ref(), &ds, &os, &notes);

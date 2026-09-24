@@ -444,15 +444,16 @@ pub struct Choice {
 /// security tools on the user's own systems, 0.02–0.05. The stop side is
 /// scored from a local file (see the `jev` example), not kept in the repo.
 pub const GUARDRAIL_THRESHOLD: f64 = 0.3;
-/// At or above this, a Task without planner-listed questions is researched
-/// before it is built. Measured: specs, protocols and formats 0.79–0.93;
+/// At or above this, the Report notes that a Task the plan gave no research
+/// questions probably needed some; reported, not acted on. Measured: specs, protocols and formats 0.79–0.93;
 /// flags, renames and plain logic 0.07–0.10.
 pub const RESEARCH_THRESHOLD: f64 = 0.5;
 /// At or above this, a change to a pre-existing test is treated as weakening
 /// it: the Attempt is reverted and the Task blocked. Measured: loosened, ignored or
 /// rewritten-to-match 0.89–0.97; renamed, extended or refactored 0.06–0.16.
 pub const CHEAT_THRESHOLD: f64 = 0.5;
-/// Below this, research is judged not to have answered its question.
+/// Below this, a Note already on file is not reused for a new question (the one
+/// place this still decides anything); for a Note just written, it is reported.
 /// Measured: notes that settle it, or say precisely what is missing,
 /// 0.63–0.71; off-question or overreaching 0.03–0.06. The middle of that gap.
 pub const ANSWERED_THRESHOLD: f64 = 0.35;

@@ -239,6 +239,10 @@ pub struct NoteRecord {
     pub verified: usize,
     pub findings: usize,
     pub answered: Option<f64>,
+    /// Jev's probability, before the research, that the question needed
+    /// outside sources. Reported, not acted on.
+    #[serde(default)]
+    pub need: Option<f64>,
     /// Found on file instead of researched again.
     #[serde(default)]
     pub reused: bool,
