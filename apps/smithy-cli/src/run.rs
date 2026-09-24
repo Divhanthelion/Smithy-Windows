@@ -34,7 +34,10 @@ pub enum RunCommand {
 
 pub fn usage() -> &'static str {
     "\
-smithy-agent run \"INTENT\" [--hours N] [--attempts N] [--project PATH]
+smithy-agent run \"INTENT\" [--hours N] [--attempts N] [--research-minutes N]
+                          [--project PATH]
+                                               research may spend a third of --hours
+                                               unless --research-minutes says otherwise
 smithy-agent run --intent-file FILE …          the intent from a file
 smithy-agent run --resume [ID] [--allow T3 …]  carry on the newest (or named) Run;
                                                --allow clears a guardrail flag or
@@ -67,6 +70,13 @@ pub fn parse(list: bool, words: &[String]) -> Result<(RunCommand, PathBuf), Stri
                 ceilings.hours = value("--hours")?
                     .parse()
                     .map_err(|_| "--hours takes a whole number".to_string())?
+            }
+            "--research-minutes" => {
+                ceilings.research_minutes = Some(
+                    value("--research-minutes")?
+                        .parse()
+                        .map_err(|_| "--research-minutes takes a whole number".to_string())?,
+                )
             }
             "--attempts" => {
                 ceilings.attempts_per_task = value("--attempts")?
@@ -219,7 +229,7 @@ impl Agents for CliAgents {
         );
         let task = match purpose {
             Purpose::Build { task } => Some(task.clone()),
-            Purpose::Research { task } => task.clone(),
+            Purpose::Research { task, .. } => task.clone(),
             Purpose::Plan => None,
         };
         registry.add_hook(Box::new(UnattendedShell {
@@ -242,8 +252,11 @@ impl Agents for CliAgents {
         let mut config = SessionConfig::new(prompt.clone())
             .with_segments(prompt.len().saturating_sub(project_chars), project_chars);
         config.limits = p.limits.clone();
-        // Fifteen minutes: pointed research on one question, drafted early.
-        config.limits.max_seconds = if research { 900 } else { p.turn_seconds };
+        // A research turn is as long as its question deserves.
+        config.limits.max_seconds = match purpose {
+            Purpose::Research { depth, .. } => depth.minutes() * 60,
+            _ => p.turn_seconds,
+        };
         Ok(Session::new(
             p.provider.clone(),
             Arc::new(registry),

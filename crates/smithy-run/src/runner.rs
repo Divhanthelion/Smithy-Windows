@@ -17,7 +17,7 @@ use smithy_tools::research::{self, SourceStore};
 use crate::check::{run_check, CheckKind, CheckOutcome, CheckSpec, CHECK_TIMEOUT};
 use crate::decisions::{self, Answer, DecisionLog, Draft};
 use crate::git::Git;
-use crate::plan::{planner_prompt, read_planner_reply, Plan, PlannerReply, Task};
+use crate::plan::{planner_prompt, read_planner_reply, Depth, Plan, PlannerReply, Task};
 use crate::prompts;
 use crate::report::{self, NoteLine};
 use crate::state::{
@@ -43,7 +43,7 @@ pub enum Purpose {
     /// Builds one Task.
     Build { task: String },
     /// Researches one question; writes only under `.smithy/research/`.
-    Research { task: Option<String> },
+    Research { task: Option<String>, depth: Depth },
 }
 
 #[async_trait]
@@ -541,43 +541,37 @@ impl Runner {
         self.state.task(&task.id).status = TaskStatus::Active;
         self.save();
 
-        // Research first, when the plan asked or Jev thinks it must.
-        let mut questions = task.research.clone();
-        if questions.is_empty() {
-            let st =
-                jev::research_state(&plan.intent, &task.title, &task.why, &task.render_checks());
-            let answer = self.deps.judge.needs_research(&st).await;
-            let research = matches!(answer, Ok(p) if p >= jev::RESEARCH_THRESHOLD);
-            self.record(Draft {
-                task: Some(&task.id),
-                attempt: None,
-                kind: "research",
-                state: &st,
-                answer: answer
-                    .map(Answer::Probability)
-                    .unwrap_or_else(Answer::Unavailable),
-                threshold: Some(jev::RESEARCH_THRESHOLD),
-                action: if research { "research first" } else { "build" },
-            });
-            if research {
-                questions.push(prompts::implied_question(task));
+        // Research first. Each question the plan asked is put to Jev ("does
+        // this need outside sources?"), so what the model could answer now is
+        // not researched; with no questions, Jev is asked about the Task as a
+        // whole. Unanswered, research goes ahead: thoroughness is the side to
+        // err on, and the Run's research budget still bounds it.
+        let checks = task.render_checks();
+        let mut questions: Vec<(String, Depth)> = Vec::new();
+        if task.research.is_empty() {
+            let st = jev::research_state(&plan.intent, &task.title, &task.why, &checks);
+            if self.needs_research(&task.id, &st).await {
+                questions.push((prompts::implied_question(task), Depth::Decision));
+            }
+        } else {
+            for item in &task.research {
+                let q = item.question().to_string();
+                if self.already_researched(&task.id, &q).is_some() {
+                    questions.push((q, item.depth()));
+                    continue;
+                }
+                let why = format!("{}\nThe question: {q}", task.why);
+                let st = jev::research_state(&plan.intent, &task.title, &why, &checks);
+                if self.needs_research(&task.id, &st).await {
+                    questions.push((q, item.depth()));
+                }
             }
         }
-        for q in questions {
+        for (q, depth) in questions {
             // Researched by this Run already (a resume, or a crash after the
             // note was written): read it, whatever its status says. A second
             // pass cost the second real Run half an hour for nothing.
-            let done_before = self
-                .state
-                .notes
-                .iter()
-                .find(|n| {
-                    n.task.as_deref() == Some(task.id.as_str())
-                        && n.question == q
-                        && self.root.join(&n.path).is_file()
-                })
-                .map(|n| n.path.clone());
-            if let Some(path) = done_before {
+            if let Some(path) = self.already_researched(&task.id, &q) {
                 self.say(&format!("research: already on file, {path}"));
                 let t = self.state.task(&task.id);
                 if !t.notes.contains(&path) {
@@ -585,7 +579,7 @@ impl Runner {
                 }
                 continue;
             }
-            if let Some(path) = self.research(&q, Some(task)).await? {
+            if let Some(path) = self.research(&q, depth, Some(task)).await? {
                 let t = self.state.task(&task.id);
                 if !t.notes.contains(&path) {
                     t.notes.push(path);
@@ -802,7 +796,7 @@ impl Runner {
                         .as_ref()
                         .map(|f| prompts::failure_question(task, f))
                         .unwrap_or_else(|| prompts::implied_question(task));
-                    let extra = match self.research(&q, Some(task)).await? {
+                    let extra = match self.research(&q, Depth::Decision, Some(task)).await? {
                         Some(path) => {
                             self.state.task(&task.id).notes.push(path.clone());
                             format!("{note}\n\nResearch on this failure is in `{path}` — read it first.")
@@ -1094,10 +1088,50 @@ impl Runner {
         AttemptEnd::Handoff
     }
 
+    /// Jev's "does this need outside sources?", logged. Unanswered, yes.
+    async fn needs_research(&mut self, task: &str, state: &str) -> bool {
+        let answer = self.deps.judge.needs_research(state).await;
+        let research = match &answer {
+            Ok(p) => *p >= jev::RESEARCH_THRESHOLD,
+            Err(_) => true,
+        };
+        self.record(Draft {
+            task: Some(task),
+            attempt: None,
+            kind: "research",
+            state,
+            answer: answer
+                .map(Answer::Probability)
+                .unwrap_or_else(Answer::Unavailable),
+            threshold: Some(jev::RESEARCH_THRESHOLD),
+            action: if research {
+                "research"
+            } else {
+                "skip: answerable without sources"
+            },
+        });
+        research
+    }
+
+    /// The Note this Run already wrote for `question` on `task`, if it is
+    /// still on disk.
+    fn already_researched(&self, task: &str, question: &str) -> Option<String> {
+        self.state
+            .notes
+            .iter()
+            .find(|n| {
+                n.task.as_deref() == Some(task)
+                    && n.question == question
+                    && self.root.join(&n.path).is_file()
+            })
+            .map(|n| n.path.clone())
+    }
+
     /// Research one question into a Note. `None` when no Note came of it.
     async fn research(
         &mut self,
         question: &str,
+        depth: Depth,
         task: Option<&Task>,
     ) -> Result<Option<String>, Verdict> {
         let task_id = task.map(|t| t.id.clone());
@@ -1145,10 +1179,11 @@ impl Runner {
             }
         }
 
-        if self.state.research_used >= self.state.ceilings.research_sessions {
+        let budget = self.state.ceilings.research_budget();
+        if self.state.research_seconds >= budget {
             self.say(&format!(
-                "research skipped: the Run's {} research Sessions are spent",
-                self.state.ceilings.research_sessions
+                "research skipped: the Run's {} minutes of research are spent",
+                budget / 60
             ));
             self.record(Draft {
                 task: task_id.as_deref(),
@@ -1161,26 +1196,39 @@ impl Runner {
             });
             return Ok(None);
         }
-        self.state.research_used += 1;
-        self.say(&format!("research: {question}"));
+        let started = Instant::now();
+        let out = self.run_research(question, depth, task).await;
+        self.state.research_seconds += started.elapsed().as_secs();
+        self.save();
+        out
+    }
+
+    async fn run_research(
+        &mut self,
+        question: &str,
+        depth: Depth,
+        task: Option<&Task>,
+    ) -> Result<Option<String>, Verdict> {
+        let task_id = task.map(|t| t.id.clone());
+        self.say(&format!("research ({}): {question}", depth.name()));
         let path = prompts::note_path(&utc_date(unix_now()), task_id.as_deref(), question);
-        // Pointed, not adversarial: a Run's research answers one question a
-        // build depends on. The full /research method (hypothesis sets,
-        // snowballing, disconfirmation) cost an hour a question on the Thor.
-        let procedure = smithy_agent::load_skill(&self.root, "pointed-research")
+        // The depth picks the method: pointed research for a lookup or a
+        // decision, the full adversarial /research for what is open.
+        let procedure = smithy_agent::load_skill(&self.root, depth.procedure())
             .or_else(|| smithy_agent::load_skill(&self.root, "research"))
             .map(|s| s.injection())
             .unwrap_or_default();
         let mut session = self
             .worker(&Purpose::Research {
                 task: task_id.clone(),
+                depth,
             })
             .await?;
         session
             .session
             .observe(Arc::new(crate::observers::WriteTheNote::new(
                 self.root.join(&path),
-                crate::observers::DRAFT_BY_STEP,
+                depth.draft_by_step(),
             )));
         let prompt = prompts::research_prompt(
             &procedure,
@@ -1269,7 +1317,7 @@ impl Runner {
             let log = self.log.clone();
             let task = match purpose {
                 Purpose::Build { task } => Some(task.clone()),
-                Purpose::Research { task } => task.clone(),
+                Purpose::Research { task, .. } => task.clone(),
                 Purpose::Plan => None,
             };
             let sink: Arc<jev::SupervisorLog> = Arc::new(move |e: jev::SupervisorEvent| {

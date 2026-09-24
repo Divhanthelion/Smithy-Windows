@@ -23,13 +23,18 @@ pub struct Ceilings {
     pub consecutive_blocked: usize,
     /// Check rounds inside one Attempt.
     pub rounds_per_attempt: usize,
-    /// Research Sessions in the whole Run, however they were asked for.
-    #[serde(default = "default_research_sessions")]
-    pub research_sessions: usize,
+    /// Minutes of research the whole Run may spend, however it was asked for.
+    /// `None` is a third of `hours`: research scales with the Run, so a big
+    /// project given more hours gets more of it.
+    #[serde(default)]
+    pub research_minutes: Option<u64>,
 }
 
-fn default_research_sessions() -> usize {
-    3
+impl Ceilings {
+    /// Seconds of research the Run may spend.
+    pub fn research_budget(&self) -> u64 {
+        self.research_minutes.unwrap_or(self.hours * 20) * 60
+    }
 }
 
 impl Default for Ceilings {
@@ -39,7 +44,7 @@ impl Default for Ceilings {
             attempts_per_task: 3,
             consecutive_blocked: 2,
             rounds_per_attempt: 6,
-            research_sessions: default_research_sessions(),
+            research_minutes: None,
         }
     }
 }
@@ -217,9 +222,9 @@ pub struct RunState {
     pub usage: UsageTotals,
     #[serde(default)]
     pub notes: Vec<NoteRecord>,
-    /// Research Sessions started so far, against `ceilings.research_sessions`.
+    /// Seconds of research spent so far, against the Run's research budget.
     #[serde(default)]
-    pub research_used: usize,
+    pub research_seconds: u64,
 }
 
 /// A research Note this Run wrote or reused.
@@ -262,7 +267,7 @@ impl RunState {
             stashes: Vec::new(),
             usage: UsageTotals::default(),
             notes: Vec::new(),
-            research_used: 0,
+            research_seconds: 0,
         }
     }
 

@@ -109,6 +109,10 @@ impl Agents for ScriptedAgents {
 struct ScriptedJudge {
     guardrail: Mutex<VecDeque<Result<f64, String>>>,
     moves: Mutex<VecDeque<&'static str>>,
+    /// What "needs outside sources?" answers; 0 unless a test says.
+    research_p: Mutex<f64>,
+    /// Answers used first, in order, before `research_p`.
+    research_queue: Mutex<VecDeque<f64>>,
     asked: Mutex<Vec<&'static str>>,
 }
 
@@ -124,7 +128,8 @@ impl Judge for ScriptedJudge {
     }
     async fn needs_research(&self, _: &str) -> Result<f64, String> {
         self.asked.lock().unwrap().push("research");
-        Ok(0.1)
+        let queued = self.research_queue.lock().unwrap().pop_front();
+        Ok(queued.unwrap_or(*self.research_p.lock().unwrap()))
     }
     async fn next_move(&self, _: &str, allowed: &[NextMove]) -> Result<Choice, String> {
         self.asked.lock().unwrap().push("next");
@@ -531,6 +536,7 @@ async fn a_resumed_run_does_not_research_the_same_question_twice() {
             answer("Wrote the note."),
         ],
     );
+    *h.judge.research_p.lock().unwrap() = 0.9;
     let first = Runner::start(root, "build a parser", Ceilings::default(), h.deps.clone())
         .await
         .unwrap();
@@ -558,33 +564,87 @@ async fn a_resumed_run_does_not_research_the_same_question_twice() {
     assert!(done.tasks["T1"].notes.contains(&note));
 }
 
+fn research_sessions(h: &Harness) -> Vec<Purpose> {
+    h.agents
+        .purposes
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| matches!(p, Purpose::Research { .. }))
+        .cloned()
+        .collect()
+}
+
+fn decision_log(root: &Path, state: &RunState) -> String {
+    std::fs::read_to_string(
+        root.join(".smithy/runs")
+            .join(&state.id)
+            .join("decisions.jsonl"),
+    )
+    .unwrap()
+}
+
+const TWO_QUESTIONS: &str = "why = \"the whole intent\"\nresearch = [{ question = \"Is P1W2D legal?\", depth = \"lookup\", why = \"the week rule\" }, \"Which designators exist?\"]\n";
+
+/// Research is not capped by count: a question the model can answer now is
+/// filtered out by Jev, one it cannot is researched at the depth the plan
+/// gave it.
+#[tokio::test]
+async fn questions_are_filtered_by_need_and_researched_at_their_depth() {
+    let tmp = project();
+    let root = tmp.path();
+    let plan = PLAN.replace("why = \"the whole intent\"\n", TWO_QUESTIONS);
+    let note = smithy_run::prompts::note_path(
+        &smithy_run::state::utc_date(smithy_run::state::unix_now()),
+        Some("T1"),
+        "Is P1W2D legal?",
+    );
+    let h = harness(
+        root,
+        vec![
+            answer(&plan),
+            write("r1", &note, "# Is P1W2D legal?\n\n**Status:** verified\n"),
+            answer("Wrote the note."),
+            write("c1", "src.txt", "fn parse() {}"),
+            answer("Done."),
+        ],
+    );
+    // Jev: the first question needs sources, the second does not.
+    h.judge.research_queue.lock().unwrap().extend([0.9, 0.05]);
+
+    let state = Runner::start(root, "build a parser", Ceilings::default(), h.deps.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(state.verdict, Some(Verdict::Done), "{:?}", state.verdict);
+    assert_eq!(
+        research_sessions(&h),
+        vec![Purpose::Research {
+            task: Some("T1".into()),
+            depth: smithy_run::plan::Depth::Lookup
+        }]
+    );
+    assert!(decision_log(root, &state).contains("skip: answerable without sources"));
+}
+
 /// The Run's research budget holds whoever asks: past it, a Task is built
 /// on what is known and the decision says why.
 #[tokio::test]
 async fn research_stops_when_the_runs_budget_is_spent() {
     let tmp = project();
     let root = tmp.path();
-    let plan = PLAN.replace(
-        "why = \"the whole intent\"\n",
-        "why = \"the whole intent\"\nresearch = [\"First question?\", \"Second question?\"]\n",
-    );
-    let note = smithy_run::prompts::note_path(
-        &smithy_run::state::utc_date(smithy_run::state::unix_now()),
-        Some("T1"),
-        "First question?",
-    );
+    let plan = PLAN.replace("why = \"the whole intent\"\n", TWO_QUESTIONS);
     let h = harness(
         root,
         vec![
             answer(&plan),
-            write("r1", &note, "# First question?\n\n**Status:** draft\n"),
-            answer("Wrote the note."),
             write("c1", "src.txt", "fn parse() {}"),
             answer("Done."),
         ],
     );
+    *h.judge.research_p.lock().unwrap() = 0.9;
     let ceilings = Ceilings {
-        research_sessions: 1,
+        research_minutes: Some(0),
         ..Ceilings::default()
     };
 
@@ -593,24 +653,25 @@ async fn research_stops_when_the_runs_budget_is_spent() {
         .unwrap();
 
     assert_eq!(state.verdict, Some(Verdict::Done), "{:?}", state.verdict);
-    assert_eq!(state.research_used, 1);
-    let research_sessions = h
-        .agents
-        .purposes
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|p| matches!(p, Purpose::Research { .. }))
-        .count();
-    assert_eq!(research_sessions, 1);
-    let log = std::fs::read_to_string(
-        root.join(".smithy/runs")
-            .join(&state.id)
-            .join("decisions.jsonl"),
-    )
-    .unwrap();
+    assert!(research_sessions(&h).is_empty());
     assert!(
-        log.contains("research budget spent"),
+        decision_log(root, &state).contains("research budget spent"),
         "the skip is a logged decision"
     );
+}
+
+#[test]
+fn the_research_budget_scales_with_the_runs_hours() {
+    let eight = Ceilings::default();
+    assert_eq!(eight.research_budget(), 8 * 20 * 60);
+    let big = Ceilings {
+        hours: 24,
+        ..Ceilings::default()
+    };
+    assert_eq!(big.research_budget(), 24 * 20 * 60);
+    let fixed = Ceilings {
+        research_minutes: Some(90),
+        ..Ceilings::default()
+    };
+    assert_eq!(fixed.research_budget(), 90 * 60);
 }

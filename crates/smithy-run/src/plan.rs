@@ -16,10 +16,90 @@ use crate::toolchain::{Counter, Toolchain};
 /// several Runs, and should say so rather than try.
 pub const MAX_TASKS: usize = 12;
 
-/// Research questions a whole plan may carry. The first real Run's planner
-/// put one on every one of six tasks for a 200-line parser, and each cost the
-/// Thor an hour. Research is for what cannot be got right otherwise.
-pub const MAX_RESEARCH_QUESTIONS: usize = 2;
+/// How much a research question deserves. Research scales with the question
+/// rather than being capped: the first real Run spent an hour on each
+/// question because every one got the full adversarial method, not because
+/// there were too many — and one of those notes caught a real bug.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Depth {
+    /// One exact fact from one authoritative page.
+    Lookup,
+    /// Choose between options, from a few primary sources.
+    #[default]
+    Decision,
+    /// Open or contested: worth the full method.
+    Deep,
+}
+
+impl Depth {
+    /// The research turn's length.
+    pub fn minutes(self) -> u64 {
+        match self {
+            Depth::Lookup => 8,
+            Depth::Decision => 20,
+            Depth::Deep => 45,
+        }
+    }
+
+    /// Tool calls before the note must exist on disk.
+    pub fn draft_by_step(self) -> usize {
+        match self {
+            Depth::Lookup => 6,
+            Depth::Decision => 12,
+            Depth::Deep => 20,
+        }
+    }
+
+    /// The Skill whose procedure the research Session follows.
+    pub fn procedure(self) -> &'static str {
+        match self {
+            Depth::Lookup | Depth::Decision => "pointed-research",
+            Depth::Deep => "research",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Depth::Lookup => "lookup",
+            Depth::Decision => "decision",
+            Depth::Deep => "deep",
+        }
+    }
+}
+
+/// A question for research: a plain string, or with its depth and reason.
+///
+/// ```toml
+/// research = ["Is P1W2D legal?", { question = "…", depth = "deep", why = "…" }]
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ResearchItem {
+    Plain(String),
+    Detailed {
+        question: String,
+        #[serde(default)]
+        depth: Depth,
+        #[serde(default)]
+        why: String,
+    },
+}
+
+impl ResearchItem {
+    pub fn question(&self) -> &str {
+        match self {
+            ResearchItem::Plain(q) | ResearchItem::Detailed { question: q, .. } => q,
+        }
+    }
+
+    pub fn depth(&self) -> Depth {
+        match self {
+            ResearchItem::Plain(_) => Depth::Decision,
+            ResearchItem::Detailed { depth, .. } => *depth,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Plan {
@@ -40,7 +120,7 @@ pub struct Task {
     pub depends: Vec<String>,
     /// Questions to answer from outside the Project before building.
     #[serde(default)]
-    pub research: Vec<String>,
+    pub research: Vec<ResearchItem>,
     #[serde(rename = "check", default)]
     pub checks: Vec<CheckSpec>,
 }
@@ -73,12 +153,10 @@ impl Plan {
                 self.tasks.len()
             ));
         }
-        let questions: usize = self.tasks.iter().map(|t| t.research.len()).sum();
-        if questions > MAX_RESEARCH_QUESTIONS {
-            errors.push(format!(
-                "{questions} research questions; at most {MAX_RESEARCH_QUESTIONS} in the whole \
-                 plan. Keep only the ones you cannot answer correctly without primary sources"
-            ));
+        for task in &self.tasks {
+            if task.research.iter().any(|r| r.question().trim().is_empty()) {
+                errors.push(format!("task {}: a research item has no question", task.id));
+            }
         }
         let programs = allowed_programs(toolchain);
         let mut seen = BTreeSet::new();
@@ -268,7 +346,7 @@ id = \"T1\"
 title = \"<short imperative>\"
 why = \"<which part of the intent this serves>\"
 depends = []                     # ids of earlier tasks it needs
-research = [\"<a question to answer from primary sources before building>\"]   # or []
+research = [{{ question = \"<what must be known>\", depth = \"lookup\", why = \"<what goes wrong without it>\" }}]   # or []
 
 [[task.check]]
 kind = \"test\"                    # build | test | lint | command
@@ -285,13 +363,15 @@ matches no test fails.
 - `min_tests` is the number of tests the task adds or relies on — not 1 when you mean 5.
 - Checks start with the toolchain's programs ({programs}) and chain only with `&&`. No `||`, `;`, \
 pipes, or `$(…)`.
-- As few tasks as the intent needs. A small library or tool is 1 to 3 tasks; split only where \
-a task would otherwise be too big to finish and test in one go. Each task ends with its own tests \
-passing.
-- Research is the exception, not a step: at most {max_research} questions in the whole plan, \
-and only for a fact you cannot get right from what you already know and the Project — an exact \
-detail of a specification, file format or external API where a mistake would make the code \
-wrong. Well-known formats need none. Phrase a question so a cited answer settles it.
+- Size the plan to the work. A small library or tool is 1 to 3 tasks; a large system may need \
+all {max}, and one bigger than that is several Runs. Split where a task would otherwise be too \
+big to finish and test in one go, not for its own sake. Each task ends with its own tests passing.
+- Research what you cannot get right from what you already know and the Project — an exact \
+detail of a specification, file format, protocol or external API, where a mistake would make the \
+code wrong. Ask as many questions as the work genuinely needs, and none you could answer now. \
+Give each a depth, which sets how long it gets: `lookup` (one exact fact from one authoritative \
+page), `decision` (choose between options from a few primary sources), `deep` (open or contested; \
+worth a full investigation). Say `why` it matters. Research already on file (below) needs none.
 - Refuse, instead of planning, if the intent is illegal or would clearly harm others: answer \
 `REFUSE: <why>` and nothing else.
 
@@ -307,7 +387,6 @@ lint: `{lint}`
 {notes}",
         name = toolchain.name,
         max = MAX_TASKS,
-        max_research = MAX_RESEARCH_QUESTIONS,
         programs = allowed_programs(toolchain)
             .iter()
             .map(|p| format!("`{p}`"))
@@ -424,20 +503,32 @@ min_tests = 4
             .is_ok());
     }
 
-    /// The first real Run's plan had a research question on each of six tasks.
+    /// A question says how much it deserves; a plain string is a decision.
     #[test]
-    fn research_is_capped_for_the_whole_plan() {
-        let e = errors_for(|p| {
-            p.tasks[0].research = vec!["a?".into(), "b?".into()];
-            p.tasks[1].research = vec!["c?".into()];
-        });
-        assert!(
-            e.iter().any(|m| m.contains("3 research questions")),
-            "{e:?}"
+    fn research_items_carry_a_depth_and_default_to_decision() {
+        let plan = Plan::parse(&GOOD.replace(
+            "research = [\"Which designators may a duration carry?\"]",
+            "research = [\"Plain question?\", { question = \"Is P1W2D legal?\", depth = \"lookup\", why = \"the week rule\" }, { question = \"Which date library?\", depth = \"deep\" }]",
+        ))
+        .unwrap();
+        let r = &plan.tasks[0].research;
+        assert_eq!(r.len(), 3);
+        assert_eq!(
+            (r[0].question(), r[0].depth()),
+            ("Plain question?", Depth::Decision)
         );
-        let mut ok = Plan::parse(GOOD).unwrap();
-        ok.tasks[1].research = vec!["b?".into()];
-        ok.validate(&Toolchain::rust()).unwrap();
+        assert_eq!(
+            (r[1].question(), r[1].depth()),
+            ("Is P1W2D legal?", Depth::Lookup)
+        );
+        assert_eq!(r[2].depth(), Depth::Deep);
+        assert_eq!(Depth::Deep.procedure(), "research");
+        assert!(Depth::Lookup.minutes() < Depth::Decision.minutes());
+        plan.validate(&Toolchain::rust()).unwrap();
+        assert_eq!(Plan::parse(&plan.to_toml()).unwrap(), plan, "round-trips");
+
+        let e = errors_for(|p| p.tasks[0].research = vec![ResearchItem::Plain("  ".into())]);
+        assert!(e.iter().any(|m| m.contains("no question")), "{e:?}");
     }
 
     #[test]
