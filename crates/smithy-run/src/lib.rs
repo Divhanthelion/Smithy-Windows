@@ -8,6 +8,7 @@ pub mod cheat;
 pub mod check;
 pub mod decisions;
 pub mod git;
+pub mod observers;
 pub mod plan;
 pub mod prompts;
 pub mod report;

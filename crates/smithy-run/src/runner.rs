@@ -1155,6 +1155,12 @@ impl Runner {
                 task: task_id.clone(),
             })
             .await?;
+        session
+            .session
+            .observe(Arc::new(crate::observers::WriteTheNote::new(
+                self.root.join(&path),
+                crate::observers::DRAFT_BY_STEP,
+            )));
         let prompt = prompts::research_prompt(
             &procedure,
             question,

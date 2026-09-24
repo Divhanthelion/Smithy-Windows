@@ -99,7 +99,10 @@ pub fn research_prompt(
     format!(
         "{procedure}\n\n---\n\n{UNATTENDED} The question is already pinned; do not wait for a yes.\n\n\
          {task_line}Pinned question: {question}\n\n\
-         Write the note to `{note_path}`{}. Run `cite_check` on it and fix or drop every finding \
+         Write the note to `{note_path}`{} as soon as you have a few sources — a draft with the \
+         Pin, the findings so far and the open questions — and update it as you learn more: the \
+         turn has a time limit, and a note that was never written is lost. Run `cite_check` on it \
+         and fix or drop every finding \
          that fails until it passes. Then answer with the note's path and its implication in two \
          or three sentences.",
         task.map(|(id, _)| format!(" with `**Task:** {id}` in its header"))
