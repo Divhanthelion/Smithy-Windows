@@ -564,6 +564,27 @@ impl Runner {
             }
         }
         for q in questions {
+            // Researched by this Run already (a resume, or a crash after the
+            // note was written): read it, whatever its status says. A second
+            // pass cost the second real Run half an hour for nothing.
+            let done_before = self
+                .state
+                .notes
+                .iter()
+                .find(|n| {
+                    n.task.as_deref() == Some(task.id.as_str())
+                        && n.question == q
+                        && self.root.join(&n.path).is_file()
+                })
+                .map(|n| n.path.clone());
+            if let Some(path) = done_before {
+                self.say(&format!("research: already on file, {path}"));
+                let t = self.state.task(&task.id);
+                if !t.notes.contains(&path) {
+                    t.notes.push(path);
+                }
+                continue;
+            }
             if let Some(path) = self.research(&q, Some(task)).await? {
                 let t = self.state.task(&task.id);
                 if !t.notes.contains(&path) {

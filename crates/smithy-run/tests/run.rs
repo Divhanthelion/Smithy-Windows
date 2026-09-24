@@ -502,3 +502,58 @@ async fn a_missing_toolchain_fails_before_any_session() {
     );
     assert!(h.agents.purposes.lock().unwrap().is_empty());
 }
+
+/// From the second real Run: a resume researched T1's question again,
+/// because the note was still a draft. What this Run already researched for
+/// a Task is not researched twice.
+#[tokio::test]
+async fn a_resumed_run_does_not_research_the_same_question_twice() {
+    let tmp = project();
+    let root = tmp.path();
+    let plan = PLAN.replace(
+        "why = \"the whole intent\"\n",
+        "why = \"the whole intent\"\nresearch = [\"Which designators exist?\"]\n",
+    );
+    let note = smithy_run::prompts::note_path(
+        &smithy_run::state::utc_date(smithy_run::state::unix_now()),
+        Some("T1"),
+        "Which designators exist?",
+    );
+    let h = harness(
+        root,
+        vec![
+            answer(&plan),
+            write(
+                "r1",
+                &note,
+                "# Which designators exist?\n\n**Status:** draft\n",
+            ),
+            answer("Wrote the note."),
+        ],
+    );
+    let first = Runner::start(root, "build a parser", Ceilings::default(), h.deps.clone())
+        .await
+        .unwrap();
+    assert!(
+        matches!(first.verdict, Some(Verdict::Failed(_))),
+        "{:?}",
+        first.verdict
+    );
+    assert!(root.join(&note).exists());
+
+    let h2 = harness(
+        root,
+        vec![write("c1", "src.txt", "fn parse() {}"), answer("Done.")],
+    );
+    let done = Runner::resume(root, None, &[], h2.deps.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(done.verdict, Some(Verdict::Done), "{:?}", done.verdict);
+    assert_eq!(
+        *h2.agents.purposes.lock().unwrap(),
+        vec![Purpose::Build { task: "T1".into() }],
+        "no second research Session"
+    );
+    assert!(done.tasks["T1"].notes.contains(&note));
+}
