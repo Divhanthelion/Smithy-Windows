@@ -23,6 +23,13 @@ pub struct Ceilings {
     pub consecutive_blocked: usize,
     /// Check rounds inside one Attempt.
     pub rounds_per_attempt: usize,
+    /// Research Sessions in the whole Run, however they were asked for.
+    #[serde(default = "default_research_sessions")]
+    pub research_sessions: usize,
+}
+
+fn default_research_sessions() -> usize {
+    3
 }
 
 impl Default for Ceilings {
@@ -32,6 +39,7 @@ impl Default for Ceilings {
             attempts_per_task: 3,
             consecutive_blocked: 2,
             rounds_per_attempt: 6,
+            research_sessions: default_research_sessions(),
         }
     }
 }
@@ -209,6 +217,9 @@ pub struct RunState {
     pub usage: UsageTotals,
     #[serde(default)]
     pub notes: Vec<NoteRecord>,
+    /// Research Sessions started so far, against `ceilings.research_sessions`.
+    #[serde(default)]
+    pub research_used: usize,
 }
 
 /// A research Note this Run wrote or reused.
@@ -251,6 +262,7 @@ impl RunState {
             stashes: Vec::new(),
             usage: UsageTotals::default(),
             notes: Vec::new(),
+            research_used: 0,
         }
     }
 

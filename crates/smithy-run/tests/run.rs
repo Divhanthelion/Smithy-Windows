@@ -557,3 +557,60 @@ async fn a_resumed_run_does_not_research_the_same_question_twice() {
     );
     assert!(done.tasks["T1"].notes.contains(&note));
 }
+
+/// The Run's research budget holds whoever asks: past it, a Task is built
+/// on what is known and the decision says why.
+#[tokio::test]
+async fn research_stops_when_the_runs_budget_is_spent() {
+    let tmp = project();
+    let root = tmp.path();
+    let plan = PLAN.replace(
+        "why = \"the whole intent\"\n",
+        "why = \"the whole intent\"\nresearch = [\"First question?\", \"Second question?\"]\n",
+    );
+    let note = smithy_run::prompts::note_path(
+        &smithy_run::state::utc_date(smithy_run::state::unix_now()),
+        Some("T1"),
+        "First question?",
+    );
+    let h = harness(
+        root,
+        vec![
+            answer(&plan),
+            write("r1", &note, "# First question?\n\n**Status:** draft\n"),
+            answer("Wrote the note."),
+            write("c1", "src.txt", "fn parse() {}"),
+            answer("Done."),
+        ],
+    );
+    let ceilings = Ceilings {
+        research_sessions: 1,
+        ..Ceilings::default()
+    };
+
+    let state = Runner::start(root, "build a parser", ceilings, h.deps.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(state.verdict, Some(Verdict::Done), "{:?}", state.verdict);
+    assert_eq!(state.research_used, 1);
+    let research_sessions = h
+        .agents
+        .purposes
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| matches!(p, Purpose::Research { .. }))
+        .count();
+    assert_eq!(research_sessions, 1);
+    let log = std::fs::read_to_string(
+        root.join(".smithy/runs")
+            .join(&state.id)
+            .join("decisions.jsonl"),
+    )
+    .unwrap();
+    assert!(
+        log.contains("research budget spent"),
+        "the skip is a logged decision"
+    );
+}

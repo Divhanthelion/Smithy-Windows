@@ -242,7 +242,8 @@ impl Agents for CliAgents {
         let mut config = SessionConfig::new(prompt.clone())
             .with_segments(prompt.len().saturating_sub(project_chars), project_chars);
         config.limits = p.limits.clone();
-        config.limits.max_seconds = if research { 1800 } else { p.turn_seconds };
+        // Fifteen minutes: pointed research on one question, drafted early.
+        config.limits.max_seconds = if research { 900 } else { p.turn_seconds };
         Ok(Session::new(
             p.provider.clone(),
             Arc::new(registry),

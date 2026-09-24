@@ -1145,9 +1145,30 @@ impl Runner {
             }
         }
 
+        if self.state.research_used >= self.state.ceilings.research_sessions {
+            self.say(&format!(
+                "research skipped: the Run's {} research Sessions are spent",
+                self.state.ceilings.research_sessions
+            ));
+            self.record(Draft {
+                task: task_id.as_deref(),
+                attempt: None,
+                kind: "research",
+                state: question,
+                answer: Answer::Rule("research budget spent".into()),
+                threshold: None,
+                action: "build without it",
+            });
+            return Ok(None);
+        }
+        self.state.research_used += 1;
         self.say(&format!("research: {question}"));
         let path = prompts::note_path(&utc_date(unix_now()), task_id.as_deref(), question);
-        let procedure = smithy_agent::load_skill(&self.root, "research")
+        // Pointed, not adversarial: a Run's research answers one question a
+        // build depends on. The full /research method (hypothesis sets,
+        // snowballing, disconfirmation) cost an hour a question on the Thor.
+        let procedure = smithy_agent::load_skill(&self.root, "pointed-research")
+            .or_else(|| smithy_agent::load_skill(&self.root, "research"))
             .map(|s| s.injection())
             .unwrap_or_default();
         let mut session = self
@@ -1206,24 +1227,11 @@ impl Runner {
                     .map(Answer::Probability)
                     .unwrap_or_else(Answer::Unavailable),
                 threshold: Some(jev::ANSWERED_THRESHOLD),
-                action: if ok {
-                    "accept"
-                } else if pass == 0 {
-                    "one more pass"
-                } else {
-                    "keep, marked partial"
-                },
+                // One judgement, no second pass: a thin note is kept and
+                // marked, and the Task's own tests remain the ground truth.
+                action: if ok { "accept" } else { "keep, marked partial" },
             });
-            if ok || pass == 1 {
-                break;
-            }
-            self.turn(
-                &mut session,
-                "The note does not yet answer the pinned question. Find what is missing, add \
-                 verified findings for it (or say precisely under Unknowns why it cannot be \
-                 found), fix the Implication, and cite_check again.",
-            )
-            .await?;
+            break;
         }
         let text = std::fs::read_to_string(self.root.join(&path)).unwrap_or_default();
         let check = self.check_note(&text);

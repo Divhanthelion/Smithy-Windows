@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use smithy_agent::observe::{StepObserver, TurnView, Verdict};
 
 /// Tool calls a research Session may make before its note must exist.
-pub const DRAFT_BY_STEP: usize = 20;
+pub const DRAFT_BY_STEP: usize = 12;
 
 pub struct WriteTheNote {
     pub note: PathBuf,

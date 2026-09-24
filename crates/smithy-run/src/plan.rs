@@ -16,6 +16,11 @@ use crate::toolchain::{Counter, Toolchain};
 /// several Runs, and should say so rather than try.
 pub const MAX_TASKS: usize = 12;
 
+/// Research questions a whole plan may carry. The first real Run's planner
+/// put one on every one of six tasks for a 200-line parser, and each cost the
+/// Thor an hour. Research is for what cannot be got right otherwise.
+pub const MAX_RESEARCH_QUESTIONS: usize = 2;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Plan {
     pub intent: String,
@@ -66,6 +71,13 @@ impl Plan {
             errors.push(format!(
                 "{} tasks; at most {MAX_TASKS}. Merge small steps, or cut the intent down",
                 self.tasks.len()
+            ));
+        }
+        let questions: usize = self.tasks.iter().map(|t| t.research.len()).sum();
+        if questions > MAX_RESEARCH_QUESTIONS {
+            errors.push(format!(
+                "{questions} research questions; at most {MAX_RESEARCH_QUESTIONS} in the whole \
+                 plan. Keep only the ones you cannot answer correctly without primary sources"
             ));
         }
         let programs = allowed_programs(toolchain);
@@ -273,10 +285,13 @@ matches no test fails.
 - `min_tests` is the number of tests the task adds or relies on — not 1 when you mean 5.
 - Checks start with the toolchain's programs ({programs}) and chain only with `&&`. No `||`, `;`, \
 pipes, or `$(…)`.
-- Small tasks: each one builds on the last and ends with its own tests passing.
-- Put a question in `research` when the task depends on facts from outside this Project that \
-must be exact: a specification, a file format, an external API, version-specific behaviour. \
-Phrase it so a cited answer settles it.
+- As few tasks as the intent needs. A small library or tool is 1 to 3 tasks; split only where \
+a task would otherwise be too big to finish and test in one go. Each task ends with its own tests \
+passing.
+- Research is the exception, not a step: at most {max_research} questions in the whole plan, \
+and only for a fact you cannot get right from what you already know and the Project — an exact \
+detail of a specification, file format or external API where a mistake would make the code \
+wrong. Well-known formats need none. Phrase a question so a cited answer settles it.
 - Refuse, instead of planning, if the intent is illegal or would clearly harm others: answer \
 `REFUSE: <why>` and nothing else.
 
@@ -292,6 +307,7 @@ lint: `{lint}`
 {notes}",
         name = toolchain.name,
         max = MAX_TASKS,
+        max_research = MAX_RESEARCH_QUESTIONS,
         programs = allowed_programs(toolchain)
             .iter()
             .map(|p| format!("`{p}`"))
@@ -406,6 +422,22 @@ min_tests = 4
             })
             .unwrap()
             .is_ok());
+    }
+
+    /// The first real Run's plan had a research question on each of six tasks.
+    #[test]
+    fn research_is_capped_for_the_whole_plan() {
+        let e = errors_for(|p| {
+            p.tasks[0].research = vec!["a?".into(), "b?".into()];
+            p.tasks[1].research = vec!["c?".into()];
+        });
+        assert!(
+            e.iter().any(|m| m.contains("3 research questions")),
+            "{e:?}"
+        );
+        let mut ok = Plan::parse(GOOD).unwrap();
+        ok.tasks[1].research = vec!["b?".into()];
+        ok.validate(&Toolchain::rust()).unwrap();
     }
 
     #[test]
