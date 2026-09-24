@@ -485,9 +485,13 @@ fn mark(right: bool) -> &'static str {
 #[tokio::main]
 async fn main() {
     let Some(jev) = Jev::from_store() else {
-        eprintln!("no key: set AI_GATEWAY_API_KEY or store `ai-gateway-api-key`");
+        eprintln!(
+            "no key: set AI_GATEWAY_API_KEY or store `ai-gateway-api-key` \
+             (or JEV_ENDPOINT for a compatible server)"
+        );
         std::process::exit(2);
     };
+    println!("asking {}\n", jev.describe());
     let jev = jev.patient();
     let root = Path::new("C:/Users/dev/code/project");
     let only = std::env::args().nth(1);

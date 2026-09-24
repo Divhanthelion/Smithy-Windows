@@ -71,6 +71,11 @@ const SHELL: &str = "sh";
 pub struct Jev {
     http: reqwest::Client,
     key: String,
+    /// Where the questions go, and the model named in them: TypeSafe's Jev
+    /// unless `JEV_ENDPOINT` points somewhere else that speaks the same API
+    /// (Von's `von serve`, for one).
+    endpoint: String,
+    model: String,
     /// Waits before each retry of a transient failure. One short one for the
     /// checks inside a turn; [`Jev::patient`] for a Run's decisions, which
     /// are few and worth waiting out a 429 for.
@@ -79,7 +84,16 @@ pub struct Jev {
 
 impl Jev {
     /// `None` when no key is stored or set — the ordinary case, and not an error.
+    ///
+    /// `JEV_ENDPOINT` sends the questions to another server with the same
+    /// API, as `JEV_MODEL` (default `typesafe-ai/jev`), with `JEV_API_KEY`
+    /// if it wants one. The gateway key never goes anywhere but the gateway.
     pub fn from_store() -> Option<Jev> {
+        let var = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+        if let Some(endpoint) = var("JEV_ENDPOINT") {
+            let jev = Jev::new(var("JEV_API_KEY").unwrap_or_default()).ok()?;
+            return Some(jev.at(&endpoint, var("JEV_MODEL").as_deref().unwrap_or(MODEL)));
+        }
         let key = crate::config::api_key(AI_GATEWAY_KEY, "AI_GATEWAY_API_KEY")?;
         Jev::new(key).ok()
     }
@@ -92,8 +106,22 @@ impl Jev {
         Ok(Jev {
             http,
             key,
+            endpoint: ENDPOINT.to_string(),
+            model: MODEL.to_string(),
             retries: &[400],
         })
+    }
+
+    /// Ask a different server that speaks the same API, as `model`.
+    pub fn at(mut self, endpoint: &str, model: &str) -> Jev {
+        self.endpoint = endpoint.to_string();
+        self.model = model.to_string();
+        self
+    }
+
+    /// Who is answering, for logs and reports.
+    pub fn describe(&self) -> String {
+        format!("{} at {}", self.model, self.endpoint)
     }
 
     /// Retry transient failures for about half a minute. For a Run's
@@ -131,7 +159,7 @@ impl Jev {
     /// has stopped being cheap.
     async fn ask_noul(&self, state: String, instructions: &str) -> Result<f64, String> {
         let body = json!({
-            "model": MODEL,
+            "model": self.model,
             "state": state,
             "questions": { "q": { "type": "noul", "instructions": instructions } },
         });
@@ -150,7 +178,7 @@ impl Jev {
             .map(|(name, when)| (name.to_string(), Value::String(when.to_string())))
             .collect();
         let body = json!({
-            "model": MODEL,
+            "model": self.model,
             "state": state,
             "questions": { "q": { "type": "choice", "instructions": instructions, "criteria": criteria } },
         });
@@ -172,11 +200,11 @@ impl Jev {
     }
 
     async fn post(&self, body: &Value) -> Result<String, Failure> {
-        let response = self
-            .http
-            .post(ENDPOINT)
-            .bearer_auth(&self.key)
-            .json(body)
+        let mut request = self.http.post(&self.endpoint).json(body);
+        if !self.key.is_empty() {
+            request = request.bearer_auth(&self.key);
+        }
+        let response = request
             .send()
             .await
             .map_err(|e| Failure::Transient(format!("Jev unreachable: {e}")))?;
