@@ -308,7 +308,11 @@ pub fn model_may_run(command: &str) -> Result<(), String> {
                         .all(|f| {
                             matches!(*f, "-a" | "-r" | "-v" | "-vv" | "--list" | "--show-current")
                         });
-                if RUNNER_OWNS.contains(sub) && !is_branch_listing {
+                // Looking at stashes is reading; the Run leaves its
+                // interrupted work there, so a model may want to.
+                let is_stash_reading =
+                    *sub == "stash" && matches!(words.get(j + 1).copied(), Some("list" | "show"));
+                if RUNNER_OWNS.contains(sub) && !is_branch_listing && !is_stash_reading {
                     return Err(format!(
                         "`git {sub}` is not available during a Run: the runner owns git and \
                          commits for you when this Task's Checks pass. Read-only git (status, \
@@ -442,6 +446,8 @@ mod tests {
             "git --no-pager show HEAD",
             "git branch --show-current",
             "git branch -a",
+            "git stash list; echo ---; git log --oneline -5",
+            "git stash show -p stash@{0}",
             "cargo test && git diff",
             "echo commit",
         ] {
@@ -452,6 +458,8 @@ mod tests {
             "git -C . reset --hard",
             "cargo fmt && git checkout -- .",
             "git stash",
+            "git stash pop",
+            "git stash drop",
             "git push --force origin main",
             "git branch -D main",
             "(cd src; git clean -fd)",
