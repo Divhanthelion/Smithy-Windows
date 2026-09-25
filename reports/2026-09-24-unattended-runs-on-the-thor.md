@@ -1,8 +1,8 @@
 # Teaching a local model to work while we sleep
 
-*A field report on Smithy's unattended Runs: three real runs on a Jetson AGX
-Thor, what the first one broke, what it took for the next two to finish, and
-where the time goes. 23–25 September 2026.*
+*A field report on Smithy's unattended Runs: four real runs on a Jetson AGX
+Thor, what the first one broke, what it took for the rest to finish, and where
+the time goes. 23–25 September 2026.*
 
 ---
 
@@ -145,6 +145,25 @@ more. On the harder question, thinking found the one fact that settled it and
 the other version didn't. So quick lookups now skip the thinking, and
 everything else keeps it.
 
+On paper, the changes above brought the same run to about an hour and a
+quarter. So we ran it a fourth time to find out.
+
+## The fourth run
+
+**53 minutes.** Same intent, same clean start, three of three tasks passing
+their tests — half the time of the third run, and faster than the estimate.
+Research took nine minutes instead of thirty-seven: two questions side by
+side, without thinking, and they came back with more verified findings than
+any lookup before them. The task that took forty-two minutes last time took
+eighteen. The model wrote little more than half as much text as before, and a
+much smaller share of it was thinking. Both research notes are now in the
+library, so a fifth run of this intent would research nothing at all.
+
+It isn't perfect: the finished tool reads `-P1D` as a command-line option and
+prints its usage instead of saying the duration is invalid — an edge case none
+of its 26 tests thought to check. And we can't yet say how much of the gain was
+the faster model and how much the better research; this run changed both.
+
 ## What it is, honestly
 
 A local model on a Thor writes code at 30–45 tokens a second. Work a hosted
@@ -153,19 +172,18 @@ watching it live is painful. Overnight, on a machine that is otherwise idle,
 private and free, that trade looks different — which is the point of making
 it run unattended.
 
-On paper, the changes above bring the same run to about an hour and a
-quarter, and closer to an hour for a topic it has researched before. That is
-an estimate from measurements of each piece, not a run, and the next run will
-say whether it holds. The bar hasn't moved: done while we sleep, and a report
-the next morning we can believe.
+The first run took three and a half hours to finish one task of six. The
+fourth finished everything in under an hour, on the same machine, unattended.
+The bar hasn't moved: done while we sleep, and a report the next morning we
+can believe.
 
 ---
 ---
 
 # Technical report
 
-**Period:** 2026-09-23 17:36 UTC – 2026-09-25 05:10 UTC
-**Repository:** `Smithy-Windows` (private GitHub), 34 commits from `736e89a`
+**Period:** 2026-09-23 17:36 UTC – 2026-09-25 07:10 UTC
+**Repository:** `Smithy-Windows` (private GitHub), 35 commits from `736e89a`
 to the commit carrying this report, 549 tests passing (smithy-agent 270 + 28
 integration, smithy-tools 157 + 7, smithy-run 62 + 16 end-to-end, smithy-cli
 9).
@@ -200,8 +218,10 @@ September) via vLLM on the Thor; Jev
   generating, three quarters of it thinking. The FP8 hybrid decodes 19–27%
   faster in 2.7 GiB less; research now runs side by side on three server
   slots, stops when its Note is done, and reuses Notes from a library shared
-  between Projects; a thinking A/B made lookups think-free. Estimated, not
-  yet measured: about 1 h 15 min for the same Run.
+  between Projects; a thinking A/B made lookups think-free.
+- **Fourth real Run finished in 53 minutes** with all of it: 3 of 3 tasks,
+  research 9 minutes instead of 37, thinking down from 76% to 54% of what the
+  model wrote (§10).
 - **Thor re-served** with a tuned vLLM recipe: prefix caching works and is
   now reported per request (93% of a 16k prompt; time to first token 9.05 s →
   1.0 s), 8 GiB fixed KV cache (292k tokens), 28–46 tok/s decode on the
@@ -508,10 +528,9 @@ co-residency, turn length, settings, a fresh trial Run, OS updates, Von,
 research routing, housekeeping) were all worked the same evening; §9 has the
 results. What remains:
 
-1. **The combined effect is unmeasured.** §10's changes — the FP8 hybrid,
-   research side by side, research that stops when done, the note library,
-   and lookups without thinking — were each measured on their own, not
-   together in a Run. The estimate in §10 is an estimate.
+1. **Which change did how much.** The fourth Run measured §10's changes
+   together (53 minutes, against an estimate of 1 h 15 min); it cannot say how
+   much of T2's gain was the hybrid's speed and how much the better research.
 2. **Research is bound by its clock.** None of the six A/B research sessions
    finished its Note inside its time (8 or 20 minutes), so stopping when done
    saved nothing there, and a lookup whose source is behind a paywall (ISO
@@ -740,14 +759,38 @@ middle question stalled both ways on ISO's paywalled text. So a lookup now
 runs without thinking and a decision or deep research with it
 (`811ea1e`); building keeps thinking.
 
-**What to expect.** Not yet measured in a Run. From the third Run's
-breakdown: research side by side would take its three questions in about 20
-minutes rather than 37; the hybrid takes roughly a fifth off every model
-minute; the library takes research to zero for questions a Run has already
-answered. Together: planning and building's 71 minutes at the hybrid's
-speed are about 57, plus 20 of research, so the third Run's work in about
-1 h 15 min, and about 1 h on a topic already in the library. Lookups without
-thinking change what research produces in its time, not how long it takes.
+**The estimate.** From the third Run's breakdown: research side by side
+would take its questions in about 20 minutes rather than 37; the hybrid takes
+roughly a fifth off every model minute. Planning and building's 71 minutes at
+the hybrid's speed are about 57, plus 20 of research: about 1 h 15 min.
+
+**The fourth Run** measured it: the same intent from the same clean `master`,
+with everything above and `--slots 3` — run `20260925-0612-3aa0`, **done —
+every Task's Checks pass, in 53 minutes**.
+
+| | Third Run | Fourth Run |
+|---|---|---|
+| Wall clock | 1 h 49 m | **53 m** |
+| Planning | 9.4 min | 10.7 min |
+| Research | 37 min, one question at a time | **9 min**, two lookups side by side, no thinking |
+| T1 / T2 / T3 building | 15 / 42 / 5 min | **9.6 / 17.8 / 4.6 min** |
+| Model requests | 154 | 240 |
+| Tokens generated | 221k, 76% thinking | **125k, 54% thinking** |
+| Prompt tokens cached | 90% | 92% |
+| Refused commands | 4 (2 wrong) | 2 (both right: a temp directory and `~/.cargo`) |
+
+It beat the estimate, and almost all of the difference is T2: 18 minutes
+instead of 42. Two things plausibly account for it, and this run cannot
+separate them: the hybrid's speed, and better research — the two lookups ran
+without thinking and verified 13 of 24 and 19 of 25 findings, where the
+third Run's T2 went in with less to build on. More requests but fewer tokens:
+research without thinking makes many small calls instead of few long ones.
+
+The library now holds both Notes, so a fifth Run of this intent would
+research nothing. The finished CLI gives `0.5` for `PT0.5S`, `275400` for
+`P3DT4H30M` and `1.5` for `PT1,5S`, and refuses `P1Y` and `P1W2D` with
+reasons; it prints its usage for `-P1D`, reading the minus sign as an option —
+a real edge case none of the 26 tests covers.
 
 ## Appendix A. Commits
 
@@ -785,6 +828,7 @@ c8c2ec2 Shell guard: Git Bash drive paths, /dev/null, and a bare backslash
 aa08fd8 Shell guard: a heredoc that only writes a file is data; report run 3
 0a9b962 Research: side by side, done when done, shared between Projects
 811ea1e Research: a lookup does not think; a decision does
+7fbf53d Report: where the time goes, and what was changed because of it
 ```
 
 ## Appendix B. Thor state
