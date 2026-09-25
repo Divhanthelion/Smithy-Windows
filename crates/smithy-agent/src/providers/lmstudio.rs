@@ -208,15 +208,23 @@ impl LmStudio {
     /// The refusal arrives before any token, so nothing reached `on_delta` and
     /// the retry is invisible. The flag sticks: every later request in this
     /// provider's life goes without it rather than paying the refusal again.
+    ///
+    /// Whether to retry is decided by *this* request — was it sent with
+    /// `min_p`? — not by who set the flag. Several Sessions share one
+    /// provider; when research ran three at once, two requests were refused
+    /// together, one set the flag and retried, and the other found it set,
+    /// did not retry, and the error ended the Run.
     async fn complete_adapting(
         &self,
         request: CompletionRequest<'_>,
         on_delta: Option<&(dyn Fn(Delta) + Send + Sync)>,
     ) -> Result<Completion, ProviderError> {
+        let sent_min_p = !self.omit_min_p.load(Ordering::Relaxed);
         match self.complete_streaming(&request, on_delta).await {
             Err(ProviderError::Http { status: 400, body })
-                if body.contains("min_p") && !self.omit_min_p.swap(true, Ordering::Relaxed) =>
+                if sent_min_p && body.contains("min_p") =>
             {
+                self.omit_min_p.store(true, Ordering::Relaxed);
                 self.complete_streaming(&request, on_delta).await
             }
             other => other,
@@ -520,6 +528,99 @@ mod step_budget_tests {
             deepseek, 300,
             "the 1M backstop is the ceiling, not the 32k budget"
         );
+    }
+
+    /// A server that refuses `min_p` the way vLLM does with speculative
+    /// decoding: 400 naming it, after a moment, so concurrent requests are all
+    /// in flight before the first refusal lands. Anything else gets a
+    /// one-word streamed answer.
+    async fn refusing_min_p_server() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    loop {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        let text = String::from_utf8_lossy(&buf);
+                        if let Some(end) = text.find("\r\n\r\n") {
+                            let len = text[..end]
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_ascii_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .and_then(|v| v.trim().parse::<usize>().ok())
+                                })
+                                .unwrap_or(0);
+                            if buf.len() >= end + 4 + len {
+                                break;
+                            }
+                        }
+                    }
+                    let request = String::from_utf8_lossy(&buf);
+                    let response = if request.contains("\"min_p\"") {
+                        tokio::time::sleep(Duration::from_millis(150)).await;
+                        let body = r#"{"error":{"message":"The min_p and logit_bias sampling parameters are not yet supported with speculative decoding."}}"#;
+                        format!(
+                            "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                    } else {
+                        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+                        format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                    };
+                    let _ = sock.write_all(response.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        format!("http://{addr}/v1")
+    }
+
+    /// The race the third Run's research hit: three Sessions share one
+    /// provider, two requests are refused together, and both must retry —
+    /// not only the one that happened to set the flag.
+    #[tokio::test]
+    async fn concurrent_requests_refused_for_min_p_all_retry_without_it() {
+        let provider = LmStudio::new(refusing_min_p_server().await, "m").unwrap();
+        let history = {
+            let mut h = crate::message::History::new("sys");
+            h.push(crate::message::Message::user("hi"));
+            h
+        };
+        let tools = Value::Array(Vec::new());
+        let sampling = Sampling::default();
+        let ask = || {
+            provider.complete(
+                CompletionRequest {
+                    history: &history,
+                    tools: &tools,
+                    sampling: &sampling,
+                    timeout: None,
+                },
+                None,
+            )
+        };
+        let (a, b, c) = tokio::join!(ask(), ask(), ask());
+        for (name, r) in [("a", a), ("b", b), ("c", c)] {
+            let r = r.unwrap_or_else(|e| panic!("request {name} failed: {e}"));
+            assert_eq!(r.content, "ok", "request {name}");
+        }
+        let later = ask().await.unwrap();
+        assert_eq!(later.content, "ok", "the flag sticks: no refusal to pay again");
     }
 
     /// No reply cap goes to a local server, and thinking is only mentioned
