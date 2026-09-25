@@ -1,8 +1,8 @@
 # Teaching a local model to work while we sleep
 
 *A field report on Smithy's unattended Runs: three real runs on a Jetson AGX
-Thor, what the first one broke, and what it took for the next two to finish.
-23–25 September 2026.*
+Thor, what the first one broke, what it took for the next two to finish, and
+where the time goes. 23–25 September 2026.*
 
 ---
 
@@ -79,8 +79,8 @@ right.
 Same intent, clean repository, new server. **It finished.** Three tasks, three
 commits, 49 tests passing, a working command-line tool, in 2 hours 23
 minutes — 91% of the prompt served from cache, and each task stayed inside its
-own lane. Three times the model's turn ended the instant its tests went green, which
-is exactly the discipline the first run lacked.
+own lane. Three times the model's turn ended the instant its tests went
+green, which is exactly the discipline the first run lacked.
 
 It was not an hour, and the reason is the most useful thing we learned. About
 thirty minutes of the second task went to three replies in which the model
@@ -114,34 +114,66 @@ that lost half an hour last time wrote its code in 23 small steps instead of
 eight big ones — which is what we'd asked it to do. Somewhere in there it
 noticed an arithmetic slip in its own plan and quietly used the right number.
 
+## Where the time actually went
+
+The third run's log answered the question of where to look next, and the
+answer was blunt: 107 of its 109 minutes were the model generating text. The
+tests took six seconds in total. And three quarters of everything the model
+generated was thinking.
+
+So there were three levers — generate faster, generate less, or generate
+several things at once — and we measured each before trusting it.
+
+*Faster:* a variant of the model with some of its weights stored more
+compactly decodes 19–27% faster and takes 2.7 GB less memory. That was an
+easy call.
+
+*Several at once:* we expected running three conversations side by side to
+cost little more than one. It doesn't. Together they go about 1.4 times as
+fast as one, because each slows down by about 30%. That still pays off
+for research, which is limited by its clock rather than its words: three
+questions researched side by side finish when the longest does, so that is
+how a run does research now.
+
+*Less:* every research note is now kept in a shared library, so the next run
+that asks about ISO 8601 durations reads the answer instead of looking it up
+again. And we ran the same three research questions twice at the same moment,
+once with the model thinking before every step and once without. On quick
+lookups, thinking was a handicap: it deliberated its way to six actions in
+eight minutes, while the version that just acted took sixty-one and found
+more. On the harder question, thinking found the one fact that settled it and
+the other version didn't. So quick lookups now skip the thinking, and
+everything else keeps it.
+
 ## What it is, honestly
 
-A local model on a Thor writes code at 25–35 tokens a second. Work a hosted
+A local model on a Thor writes code at 30–45 tokens a second. Work a hosted
 frontier model does in minutes takes this one the better part of an hour, and
 watching it live is painful. Overnight, on a machine that is otherwise idle,
 private and free, that trade looks different — which is the point of making
 it run unattended.
 
-The building itself now takes about an hour. Most of what's left is fixed
-cost — ten minutes of planning and over half an hour of research that
-re-checks the same facts about ISO 8601 every run — and that is where the
-next hour is going to come from. The bar hasn't moved: done while we sleep,
-and a report the next morning we can believe.
+On paper, the changes above bring the same run to about an hour and a
+quarter, and closer to an hour for a topic it has researched before. That is
+an estimate from measurements of each piece, not a run, and the next run will
+say whether it holds. The bar hasn't moved: done while we sleep, and a report
+the next morning we can believe.
 
 ---
 ---
 
 # Technical report
 
-**Period:** 2026-09-23 17:36 UTC – 2026-09-25 03:30 UTC
-**Repository:** `Smithy-Windows` (private GitHub), 31 commits from `736e89a`
-to the commit carrying this report, 544 tests passing (smithy-agent 269 + 28
-integration, smithy-tools 157 + 7, smithy-run 60 + 14 end-to-end, smithy-cli
+**Period:** 2026-09-23 17:36 UTC – 2026-09-25 05:10 UTC
+**Repository:** `Smithy-Windows` (private GitHub), 34 commits from `736e89a`
+to the commit carrying this report, 549 tests passing (smithy-agent 270 + 28
+integration, smithy-tools 157 + 7, smithy-run 62 + 16 end-to-end, smithy-cli
 9).
 **Hardware:** NVIDIA Jetson AGX Thor, 128 GB unified memory (122.8 GiB
 visible), JetPack 7.1 / L4T R38, 1 TB NVMe; Windows 11 laptop as the
 Smithy host.
-**Models:** Qwen3.8-Flash-Next (NVFP4) via vLLM on the Thor; Jev
+**Models:** Qwen3.8-Flash-Next (NVFP4; FP8-hybrid side weights from 25
+September) via vLLM on the Thor; Jev
 (`typesafe-ai/jev`) via the Vercel AI Gateway.
 
 ## 1. Summary
@@ -164,9 +196,16 @@ Smithy host.
   shell guard that refused ordinary reads; both fixed.
 - **Third real Run finished in 1 h 49 min**: 3 of 3 tasks, 154 requests,
   3.9 M prompt tokens (90% cached), no reply cut off (§9).
+- **Optimised from its log** (§10): 107 of its 109 minutes were the model
+  generating, three quarters of it thinking. The FP8 hybrid decodes 19–27%
+  faster in 2.7 GiB less; research now runs side by side on three server
+  slots, stops when its Note is done, and reuses Notes from a library shared
+  between Projects; a thinking A/B made lookups think-free. Estimated, not
+  yet measured: about 1 h 15 min for the same Run.
 - **Thor re-served** with a tuned vLLM recipe: prefix caching works and is
   now reported per request (93% of a 16k prompt; time to first token 9.05 s →
-  1.0 s), 8 GiB fixed KV cache (292k tokens), 22–38 tok/s decode.
+  1.0 s), 8 GiB fixed KV cache (292k tokens), 28–46 tok/s decode on the
+  FP8 hybrid.
 - **Co-residency measured:** an idle second model costs nothing; a busy one
   costs Flash-Next 12–62%. Apodex does not fit beside it.
 - **Von vs Jev** on Smithy's 63-case suite: Von 32 wrong, Jev 0 (one 429).
@@ -425,8 +464,9 @@ decoding (3 tokens):
 MTP acceptance: 2,723 of 4,338 draft tokens (63%). A forced-length run
 (`ignore_eos`) measured 22.6–25.3 tok/s. The recipe reports 37.6 tok/s on
 code for the base checkpoint and 42.9 for the FP8 hybrid on its own
-benchmark; the hybrid (+13 GB disk, no extra memory) remains an option.
-Peak temperature under benchmark: 48 °C.
+benchmark. Measured here on 25 September, the hybrid decodes 19–27% faster
+in 2.7 GiB less and is now the default (§10). Peak temperature under
+benchmark: 48 °C.
 
 ### 6.5 Network
 
@@ -468,13 +508,20 @@ co-residency, turn length, settings, a fresh trial Run, OS updates, Von,
 research routing, housekeeping) were all worked the same evening; §9 has the
 results. What remains:
 
-1. **The under-hour target.** The third Run took 1 h 49 min; building was
-   about an hour of it, and planning (9.5 min) and research (37 min) are
-   close to fixed costs that recheck the same ISO facts every Run.
-2. **Memory release on the Thor.** A GPU process that stops leaves its memory
+1. **The combined effect is unmeasured.** §10's changes — the FP8 hybrid,
+   research side by side, research that stops when done, the note library,
+   and lookups without thinking — were each measured on their own, not
+   together in a Run. The estimate in §10 is an estimate.
+2. **Research is bound by its clock.** None of the six A/B research sessions
+   finished its Note inside its time (8 or 20 minutes), so stopping when done
+   saved nothing there, and a lookup whose source is behind a paywall (ISO
+   8601's own text) stalls either way.
+3. **The thinking rule rests on three questions**, one sample each. It is a
+   direction, worth re-checking on the next Runs' logs.
+4. **Memory release on the Thor.** A GPU process that stops leaves its memory
    counted as used until the page cache is dropped (needs sudo). A Run cannot
    restart the server unattended until this is handled.
-3. **The shell guard is lexical.** It reads commands, not what they do;
+5. **The shell guard is lexical.** It reads commands, not what they do;
    Python's `//` inside a heredoc fed to `python` is still refused as a path.
    Acceptable while the model has the `write` tool and other ways round.
 
@@ -613,6 +660,95 @@ nothing pipes it onward, it is not inside `$(…)`, and its terminator is
 found. A heredoc fed to `bash`, `python` or `| sh` is still read as code, so
 the Python case stays refused.
 
+## 10. Optimisation (25 September)
+
+**Where the third Run's time went**, from its event log:
+
+| Phase | Replies | Model time | Generated | Thinking share |
+|---|---|---|---|---|
+| Planning | 6 | 9.4 min | 16k tokens | 60% |
+| Research (3 questions) | 62 | 36.6 min | 71k | 80% |
+| Building (3 tasks) | 86 | 61.1 min | 134k | 77% |
+| **Total** | **154** | **107 of 109 min** | **221k** | **76%** |
+
+Checks took six seconds in all; tool calls and cached prefill are small. The
+Run is model generation at ~35 tok/s, three quarters of it thinking, and
+every research session ran to its time limit. So there were three levers:
+generate faster, generate less, or generate several things at once.
+
+**Faster: the FP8 hybrid.** The recipe's prepare script rewrites four shards
+of dense side-weights as blockwise FP8 from the local checkpoint (about a
+minute, no download; worst per-tensor error 3.5%). Same benchmark as §9,
+three slots:
+
+| | code | prose | JSON | model memory |
+|---|---|---|---|---|
+| Base | 35.3 | 21.9 | 38.2 tok/s | 79.4 GiB |
+| FP8 hybrid | 43.7 | 27.9 | 45.5 tok/s | 76.8 GiB |
+
++19–27% decode in 2.7 GiB less. It is now the launch script's default.
+
+**Several at once: slots.** Three server slots cost a single stream nothing
+(35.3 / 21.9 / 38.2 with one slot or three). Several streams at once do not
+come free, though: on the base checkpoint two streams decoded 35.1 tok/s
+together and three 43.7 (about 1.1× and 1.4× one stream); on the hybrid,
+39.5 and 45.9. The model is a mixture of experts, so different conversations
+wake different experts, and speculative decoding already fills part of the
+batch; each stream slows by about 30%. It still pays for research, which is
+bound by its clock rather than its tokens: questions run side by side finish
+when the longest does. With `--slots N` above one (`SMITHY_RUN_SLOTS`), a Run
+now researches every question its plan asks before the first Task, N at a
+time; each still passes its Task's Guardrail, has its need reported and
+reuses a Note that answers it (`0a9b962`). The launch script serves three
+slots.
+
+**Less: research that stops when done.** A research turn now ends when its
+Note meets the skills' own definition of done, checked mechanically — Status
+`verified`, `cite_check` passing, an Unknowns section and a written
+Implication. Jev still only reports whether the Note answers the question.
+In the A/B below no session got there inside its time, so this saved nothing
+yet; it bounds the case where a Note is finished early.
+
+**Less: a note library.** Every Note a Run writes is also kept in
+`~/.local/share/smithy/library` (laid out like a Project's notes, so the same
+search reads it). A later Run, in any Project, reuses one that answers its
+question — the same bar as before, including Jev's threshold — and copies it
+in instead of researching. The three trial Runs re-researched the same ISO
+facts each time because each Run's Notes stayed on its branch.
+
+**Less: thinking, by depth.** Qwen can be asked not to think
+(`enable_thinking: false`). `smithy-agent research "Q" --thinking on|off`
+runs one question exactly as a Run would and reports what it cost and how
+good the Note is. The third Run's three questions, each run both ways at the
+same moment on the hybrid server:
+
+| Question | Thinking | Replies | Verified | Jev: answers it |
+|---|---|---|---|---|
+| Week and `T` rules (lookup, 8 min) | on | 6 | 1 of 9 | 0.68 |
+| | off | 61 | 6 of 14 | 0.76 |
+| Where a fraction may go (lookup, 8 min) | on | 10 | 0 of 0 | 0.08 |
+| | off | 74 | 0 of 0 | 0.18 |
+| Signs on durations (decision, 20 min) | on | 31 | 8 of 12 | 0.74 |
+| | off | 233 | 6 of 10 | 0.78 |
+
+Thinking made each lookup reply a long deliberation — six actions in eight
+minutes — and not thinking did ten times as much work in the same time and
+verified more. On the decision, thinking found the fact that settled it (ISO
+8601-2:2019 allows a leading `-` as an extension) and not thinking said, in
+its Unknowns, that it had not reached that clause; Jev scored them alike. The
+middle question stalled both ways on ISO's paywalled text. So a lookup now
+runs without thinking and a decision or deep research with it
+(`811ea1e`); building keeps thinking.
+
+**What to expect.** Not yet measured in a Run. From the third Run's
+breakdown: research side by side would take its three questions in about 20
+minutes rather than 37; the hybrid takes roughly a fifth off every model
+minute; the library takes research to zero for questions a Run has already
+answered. Together: planning and building's 71 minutes at the hybrid's
+speed are about 57, plus 20 of research, so the third Run's work in about
+1 h 15 min, and about 1 h on a topic already in the library. Lookups without
+thinking change what research produces in its time, not how long it takes.
+
 ## Appendix A. Commits
 
 ```
@@ -646,6 +782,9 @@ fa9d717 Limits that fired on good work: the reply cap, and a reply cut off in fl
 a93e551 Report: the nine open items, and the second real Run
 1a82996 Report: rewrite the cover around two runs; bring the technical report current
 c8c2ec2 Shell guard: Git Bash drive paths, /dev/null, and a bare backslash
+aa08fd8 Shell guard: a heredoc that only writes a file is data; report run 3
+0a9b962 Research: side by side, done when done, shared between Projects
+811ea1e Research: a lookup does not think; a decision does
 ```
 
 ## Appendix B. Thor state
@@ -657,7 +796,7 @@ c8c2ec2 Shell guard: Git Bash drive paths, /dev/null, and a bare backslash
 | User | a regular account in the `docker` group |
 | Rust | 1.98.1 (rustup, user-local) |
 | Server | container `flash-next`, port 8000, detached |
-| Start command | `~/thor-setup/start-flash-next.sh`: the recipe's `serving/start-qwen38-flash-next-fast.sh` with base revision `7b719225…`, port 8000, one slot, 256k, detached, `--enable-prompt-tokens-details`, and an 8 GiB KV cache (`FLASHNEXT_KV_GIB`). `FLASHNEXT_NO_RM=1` keeps a failed container's logs. Clear caches first if `free -g` shows memory held. |
+| Start command | `~/thor-setup/start-flash-next.sh`: the recipe's `serving/start-qwen38-flash-next-fast.sh` with the FP8-hybrid snapshot `7b719225…-fp8hybrid` (`FLASHNEXT_MODEL_REV` selects the base), port 8000, three slots (run Smithy with `--slots 3`), 256k, detached, `--enable-prompt-tokens-details`, and an 8 GiB KV cache (`FLASHNEXT_KV_GIB`). `FLASHNEXT_NO_RM=1` keeps a failed container's logs. Clear caches first if `free -g` shows memory held. |
 | Caches | `~/thor-hf-cache` (HF home, token file), `~/thor-vllm-cache`, `~/thor-torch-cache`, `~/thor-flashinfer-cache` |
 | Setup scripts and logs | `~/thor-setup/` |
 | Monitor | `~/sysmon-tui/target/release/sysmon-tui` (`ssh -t thor …`) |
