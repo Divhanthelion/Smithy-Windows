@@ -496,6 +496,12 @@ fn token_leaves_project(token: &str, root: &Path) -> bool {
     if token.starts_with('-') && !token.contains('/') && !token.contains("..") {
         return false;
     }
+    // What splitting on `|` and `(` leaves of a regex like `"a\|b"` or
+    // `"f(\|g"`. The shell reads a bare backslash as an escape, never as the
+    // root of a drive, which is what `Path` would make of it.
+    if token.chars().all(|c| c == '\\') {
+        return false;
+    }
     if let Some((name, rest)) = leading_variable(token) {
         return variable_path_leaves(name, rest, root);
     }
@@ -696,7 +702,39 @@ fn expand_home(path: &str) -> String {
     path.to_string()
 }
 
+/// The data sinks and standard streams: writing to them touches no file.
+/// `2>/dev/null` was the most common reason the second real Run's ordinary
+/// reads were refused.
+const HARMLESS_DEVICES: [&str; 4] = ["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr"];
+
+/// Git Bash writes `C:\Users\…` as `/c/Users/…`. Read that way, the Project's
+/// own path looked like one outside it, and five of the second real Run's
+/// nine refused commands began `cd /c/Users/…/smithy-trial`. Only on Windows:
+/// elsewhere `/c/…` is an ordinary directory.
+fn from_git_bash(path: &str) -> std::borrow::Cow<'_, str> {
+    if !cfg!(windows) {
+        return path.into();
+    }
+    let mut chars = path.chars();
+    match (chars.next(), chars.next(), chars.next()) {
+        (Some('/'), Some(drive), next)
+            if drive.is_ascii_alphabetic() && matches!(next, None | Some('/')) =>
+        {
+            let rest = match &path[2..] {
+                "" => "/",
+                rest => rest,
+            };
+            format!("{}:{rest}", drive.to_ascii_uppercase()).into()
+        }
+        _ => path.into(),
+    }
+}
+
 fn path_leaves_project(path: &str, root: &Path) -> bool {
+    if HARMLESS_DEVICES.contains(&path) {
+        return false;
+    }
+    let path = &*from_git_bash(path);
     let expanded = expand_home(path);
     if looks_like_home(path)
         && std::env::var("HOME")
@@ -965,6 +1003,59 @@ mod tests {
 
     fn project() -> &'static Path {
         Path::new("/tmp/smithy-proj")
+    }
+
+    /// Commands the second real Run was refused, verbatim but for the root.
+    /// Eight of the nine are reads inside the Project; the ninth looks into
+    /// cargo's registry, which is outside it, and must still be refused.
+    #[test]
+    fn ordinary_reads_from_the_second_run_stay_inside() {
+        let root = project();
+        for command in [
+            "ls -R src; cat Cargo.toml; cat Cargo.lock; ls .smithy; ls .smithy/runs 2>/dev/null",
+            "ls -la src src/duration 2>/dev/null; cat src/lib.rs; wc -l src/duration/grammar_tests.rs",
+            r#"grep -n "add_nanos\|scale(\|max_nanos" src/duration.rs"#,
+            r#"sed -n '150p;155p' src/duration.rs; echo ---; grep -n "MAX_FRACTION_DIGITS = \|MAX_FRACTION_DIGITS:" src/duration.rs"#,
+            "cargo test --no-fail-fast 2>&1 | tail -20 > /dev/null",
+        ] {
+            assert!(!command_leaves_project(command, root), "{command}");
+        }
+        assert!(command_leaves_project(
+            "ls ~/.cargo/registry/src/ 2>/dev/null",
+            root
+        ));
+    }
+
+    #[test]
+    fn only_the_harmless_devices_are_exempt() {
+        let root = project();
+        assert!(!command_leaves_project("cat x 2>/dev/null", root));
+        assert!(!command_leaves_project("echo hi >/dev/stderr", root));
+        assert!(command_leaves_project("cat /dev/sda", root));
+        assert!(command_leaves_project("dd if=x of=/dev/nvme0n1", root));
+        assert!(command_leaves_project("cat /dev/null/../../etc", root));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_bash_drive_paths_are_judged_as_windows_paths() {
+        let root = Path::new(r"C:\Users\dev\code\proj");
+        for inside in [
+            "cd /c/Users/dev/code/proj && cargo test",
+            "cat /c/Users/dev/code/proj/src/lib.rs",
+            "ls /C/Users/dev/code/proj",
+        ] {
+            assert!(!command_leaves_project(inside, root), "{inside}");
+        }
+        for outside in [
+            "cd /c/Users/dev/code/other",
+            "cat /c/Users/dev/.ssh/id_ed25519",
+            "ls /c/Windows/System32",
+            "ls /d/backups",
+            "cd /c",
+        ] {
+            assert!(command_leaves_project(outside, root), "{outside}");
+        }
     }
 
     #[test]
