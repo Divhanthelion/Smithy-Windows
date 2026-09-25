@@ -465,6 +465,7 @@ fn catastrophic_recursive_delete(normalized: &str) -> Option<String> {
 /// Those still hit the approval prompt only if this function returns true; the
 /// prompt remains the boundary.
 pub fn command_leaves_project(command: &str, root: &Path) -> bool {
+    let command = &*without_data_heredocs(command);
     for token in shell_tokens(command) {
         if token_leaves_project(&token, root) {
             return true;
@@ -481,6 +482,97 @@ pub fn command_leaves_project(command: &str, root: &Path) -> bool {
         }
     }
     false
+}
+
+/// Programs whose heredoc only becomes their output: the body is file
+/// contents, not something the shell or an interpreter runs.
+const HEREDOC_SINKS: [&str; 2] = ["cat", "tee"];
+
+/// The command without the bodies of heredocs that only write a file.
+///
+/// `cat >> src/x.rs <<'EOF'` … `EOF` is how a model appends code, and the
+/// code is data: in the third real Run a test comment reading
+/// `(dur-date / dur-time)` was refused because a lone `/` looked like the
+/// root. A body goes only when its program is `cat` or `tee`, nothing
+/// pipes it onward, it is not inside `$(…)` or backticks, and its terminator
+/// is found. Anything else — `bash <<EOF`, `python - <<EOF`, `cat <<EOF |
+/// sh` — is still read as the code it is.
+fn without_data_heredocs(command: &str) -> std::borrow::Cow<'_, str> {
+    if !command.contains("<<") {
+        return command.into();
+    }
+    let lines: Vec<&str> = command.lines().collect();
+    let mut kept = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        kept.push(line);
+        i += 1;
+        let Some((delimiter, strip_tabs)) = data_heredoc(line) else {
+            continue;
+        };
+        let body = i;
+        while i < lines.len() {
+            let l = if strip_tabs {
+                lines[i].trim_start_matches('\t')
+            } else {
+                lines[i]
+            };
+            if l.trim_end_matches('\r') == delimiter {
+                break;
+            }
+            i += 1;
+        }
+        if i == lines.len() {
+            // No terminator: the shell would read on, so keep it all.
+            kept.extend(&lines[body..]);
+            break;
+        }
+        i += 1;
+    }
+    kept.join("\n").into()
+}
+
+/// The terminator, and whether `<<-` strips its tabs, when `line` opens one
+/// heredoc that only feeds a file.
+fn data_heredoc(line: &str) -> Option<(String, bool)> {
+    let at = line.find("<<")?;
+    let (before, after) = (&line[..at], &line[at + 2..]);
+    if after.starts_with('<') || after.contains("<<") {
+        return None;
+    }
+    if before.contains("$(") || before.contains('`') {
+        return None;
+    }
+    let program = before
+        .rsplit(['|', ';', '&', '('])
+        .next()?
+        .split_whitespace()
+        .find(|w| !w.contains('=') && !w.starts_with('-'))?;
+    if !HEREDOC_SINKS.contains(&program_name(program).as_str()) {
+        return None;
+    }
+    let (strip_tabs, rest) = match after.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, after),
+    };
+    let rest = rest.trim_start();
+    let (delimiter, tail) = match rest.chars().next()? {
+        q @ ('\'' | '"') => {
+            let end = rest[1..].find(q)? + 1;
+            (&rest[1..end], &rest[end + 1..])
+        }
+        _ => {
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(rest.len());
+            (&rest[..end], &rest[end..])
+        }
+    };
+    if delimiter.is_empty() || tail.contains('|') {
+        return None;
+    }
+    Some((delimiter.to_string(), strip_tabs))
 }
 
 fn shell_tokens(command: &str) -> Vec<String> {
@@ -607,6 +699,7 @@ const COMMAND_WRAPPERS: &[&str] = &["env", "time", "nohup", "exec", "command", "
 /// not counted. They download rather than send, and asking on every build
 /// would make YOLO pointless.
 pub fn command_reaches_network(command: &str) -> bool {
+    let command = &*without_data_heredocs(command);
     if shell_tokens(command).iter().any(|t| names_a_url(t)) {
         return true;
     }
@@ -1023,6 +1116,36 @@ mod tests {
         assert!(command_leaves_project(
             "ls ~/.cargo/registry/src/ 2>/dev/null",
             root
+        ));
+    }
+
+    /// A heredoc that only writes a file is data; one that runs is code.
+    #[test]
+    fn a_heredoc_is_data_only_when_it_feeds_a_file() {
+        let root = project();
+        let appended = "cd /tmp/smithy-proj && cat >> src/x.rs <<'EOF'\n\
+                        // RFC 5545: \"P\" (dur-date / dur-time / dur-week)\n\
+                        let url = \"https://example.com/spec\";\n\
+                        EOF\necho done";
+        assert!(!command_leaves_project(appended, root));
+        assert!(!command_reaches_network(appended));
+        assert!(!command_leaves_project(
+            "tee -a notes.md <<-EOF\n\tsee /etc/hosts\n\tEOF",
+            root
+        ));
+
+        for code in [
+            "cat <<'EOF' | bash\nrm -rf /etc\nEOF",
+            "bash <<EOF\nrm -rf /etc\nEOF",
+            "python - <<'EOF'\nopen('/etc/passwd')\nEOF",
+            "sh -c \"$(cat <<EOF\nrm -rf /etc\nEOF\n)\"",
+            "cat > /etc/cron.d/job <<'EOF'\n* * * * * true\nEOF",
+            "cat > f <<'EOF'\n/etc/never-terminated",
+        ] {
+            assert!(command_leaves_project(code, root), "{code}");
+        }
+        assert!(command_reaches_network(
+            "cat <<'EOF' | sh\ncurl https://example.com/x\nEOF"
         ));
     }
 

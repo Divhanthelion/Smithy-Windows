@@ -1,7 +1,7 @@
 # Teaching a local model to work while we sleep
 
-*A field report on Smithy's unattended Runs: two real runs on a Jetson AGX
-Thor, what the first one broke, and what it took for the second to finish.
+*A field report on Smithy's unattended Runs: three real runs on a Jetson AGX
+Thor, what the first one broke, and what it took for the next two to finish.
 23–25 September 2026.*
 
 ---
@@ -100,29 +100,44 @@ plainly what was lost and to take one concrete step at a time. The rule we
 took from it: **a limit should be a backstop that never fires during good
 work. If it fires on good work, it is set wrong.**
 
+## The third run
+
+One more repair first: the second run's report showed Smithy's shell guard
+refusing nine perfectly ordinary commands, like `grep` on the project's own
+source, because it misread Git Bash's way of writing Windows paths, the
+`/dev/null` everyone sends errors to, and a stray backslash from a search
+pattern.
+
+Then the same intent, from the same clean start. **1 hour 49 minutes**, three
+of three tasks, 154 requests instead of 214, not one reply cut off. The task
+that lost half an hour last time wrote its code in 23 small steps instead of
+eight big ones — which is what we'd asked it to do. Somewhere in there it
+noticed an arithmetic slip in its own plan and quietly used the right number.
+
 ## What it is, honestly
 
 A local model on a Thor writes code at 25–35 tokens a second. Work a hosted
-frontier model does in minutes takes this one closer to half an hour, so every mistake
-costs half an hour, and watching it live is painful. Overnight, on a machine
-that is otherwise idle, private and free, that trade looks different — which
-is the point of making it run unattended.
+frontier model does in minutes takes this one the better part of an hour, and
+watching it live is painful. Overnight, on a machine that is otherwise idle,
+private and free, that trade looks different — which is the point of making
+it run unattended.
 
-The next run is the same intent on the fixed build, after one more repair:
-the second run's report showed Smithy's shell guard refusing nine perfectly
-ordinary commands, like `grep` on the project's own source. The bar hasn't
-moved: done while we sleep, and a report the next morning we can believe.
+The building itself now takes about an hour. Most of what's left is fixed
+cost — ten minutes of planning and over half an hour of research that
+re-checks the same facts about ISO 8601 every run — and that is where the
+next hour is going to come from. The bar hasn't moved: done while we sleep,
+and a report the next morning we can believe.
 
 ---
 ---
 
 # Technical report
 
-**Period:** 2026-09-23 17:36 UTC – 2026-09-25 00:30 UTC
-**Repository:** `Smithy-Windows` (private GitHub), 29 commits from `736e89a`
-to the commit carrying this report, +11,217 lines across 49 files, 540 tests
-passing (smithy-agent 269 + 28 integration, smithy-tools 153 + 7, smithy-run
-60 + 14 end-to-end, smithy-cli 9).
+**Period:** 2026-09-23 17:36 UTC – 2026-09-25 03:30 UTC
+**Repository:** `Smithy-Windows` (private GitHub), 31 commits from `736e89a`
+to the commit carrying this report, 544 tests passing (smithy-agent 269 + 28
+integration, smithy-tools 157 + 7, smithy-run 60 + 14 end-to-end, smithy-cli
+9).
 **Hardware:** NVIDIA Jetson AGX Thor, 128 GB unified memory (122.8 GiB
 visible), JetPack 7.1 / L4T R38, 1 TB NVMe; Windows 11 laptop as the
 Smithy host.
@@ -145,8 +160,10 @@ Smithy host.
   for heat. Post-mortem identified ten causes; all ten are now fixed.
 - **Second real Run** of the same intent **finished**: 3 of 3 tasks, 2 h
   23 min, 91% of 6.2 M prompt tokens from cache, 49 tests in the finished
-  library (§9). It exposed a per-reply output cap that cost ~30 minutes (now
-  removed) and a shell guard that refuses ordinary reads (open).
+  library (§9). It exposed a per-reply output cap that cost ~30 minutes and a
+  shell guard that refused ordinary reads; both fixed.
+- **Third real Run finished in 1 h 49 min**: 3 of 3 tasks, 154 requests,
+  3.9 M prompt tokens (90% cached), no reply cut off (§9).
 - **Thor re-served** with a tuned vLLM recipe: prefix caching works and is
   now reported per request (93% of a 16k prompt; time to first token 9.05 s →
   1.0 s), 8 GiB fixed KV cache (292k tokens), 22–38 tok/s decode.
@@ -451,17 +468,15 @@ co-residency, turn length, settings, a fresh trial Run, OS updates, Von,
 research routing, housekeeping) were all worked the same evening; §9 has the
 results. What remains:
 
-1. **Shell guard false positives.** The second Run refused nine ordinary
-   read-only commands as reaching outside the Project, most likely on
-   `2>/dev/null`, Git Bash paths (`/c/Users/…`) and `~`.
-2. **A third trial Run** on the fixed binary, to confirm the reply-cap fix
-   in practice; without that loss the second Run would have taken about
-   1 h 50 m.
-3. **Memory release on the Thor.** A GPU process that stops leaves its memory
+1. **The under-hour target.** The third Run took 1 h 49 min; building was
+   about an hour of it, and planning (9.5 min) and research (37 min) are
+   close to fixed costs that recheck the same ISO facts every Run.
+2. **Memory release on the Thor.** A GPU process that stops leaves its memory
    counted as used until the page cache is dropped (needs sudo). A Run cannot
    restart the server unattended until this is handled.
-4. **The first trial's under-hour target** was not met by the second Run
-   (2 h 23 m); research (36 min) and one 63-minute task dominate.
+3. **The shell guard is lexical.** It reads commands, not what they do;
+   Python's `//` inside a heredoc fed to `python` is still refused as a path.
+   Acceptable while the model has the `write` tool and other ways round.
 
 ## 9. Follow-up (24 September, evening)
 
@@ -563,7 +578,40 @@ What it found:
 - **The shell guard refuses ordinary reads.** Nine read-only commands (`grep`
   and `sed -n` on `src/`, `ls -R src`, `cargo test … | tail`) were refused as
   "reaching outside the Project", most likely on `2>/dev/null`, Git Bash
-  paths (`/c/Users/…`) and `~`. Open.
+  paths (`/c/Users/…`) and `~`. Fixed in `c8c2ec2` (below).
+
+**Third real Run.** The same intent from the same clean `master`, on a build
+with the fixes above and the shell guard repaired: run `20260925-0112-de54`,
+**done — every Task's Checks pass**, in **1 h 49 min**.
+
+| | First | Second | Third |
+|---|---|---|---|
+| Result | 1 of 6, stopped | 3 of 3 | 3 of 3 |
+| Time | ~3.5 h | 2 h 23 m | 1 h 49 m |
+| Model requests | 284 | 214 | 154 |
+| Prompt tokens | 14.8 M, 0% cached | 6.2 M, 91% | 3.9 M, 90% |
+| Replies cut off | — | 3 | 0 |
+| Refused commands | — | 9 (8 wrong) | 4 (2 wrong) |
+
+Planning 9.5 min, research 37 min (two lookups and a decision, as before),
+T1 15 min, T2 42 min, T3 5 min. T2, the task that lost half an hour in the
+second Run, made 23 replies in its first turn against 8, the longest with
+7.5k tokens of thinking, none cut off. The CLI gives `0.5` for `PT0.5S`,
+`275400` for `P3DT4H30M`, `1.5` for `PT1,5S`, and refuses `P1Y`, `P1W2D` and
+`-P1D` with reasons. In a test comment the model noted an arithmetic slip in
+its own plan (274,200 for 275,400) and used the right value.
+
+**The shell guard.** `c8c2ec2` fixed the second Run's three causes: Git Bash
+drive paths (`/c/Users/…`) are judged as the Windows paths they are, the
+standard streams and `/dev/null` are not files outside the Project, and a
+bare `\` left by splitting a regex is an escape, not a drive root. Of the
+third Run's four refusals, two were right (a temp directory and `/tmp`
+outside the Project) and two were heredoc bodies — a test comment reading
+`(dur-date / dur-time)` and Python's `//` — read as paths. A heredoc body is
+now skipped when it only becomes a file: its program is `cat` or `tee`,
+nothing pipes it onward, it is not inside `$(…)`, and its terminator is
+found. A heredoc fed to `bash`, `python` or `| sh` is still read as code, so
+the Python case stays refused.
 
 ## Appendix A. Commits
 
@@ -596,6 +644,8 @@ c800125 Jev: the endpoint and model can point at a compatible server
 fa9d717 Limits that fired on good work: the reply cap, and a reply cut off in flight
 99044be Prompts: say why thinking is lost, and which tests are the Run's own
 a93e551 Report: the nine open items, and the second real Run
+1a82996 Report: rewrite the cover around two runs; bring the technical report current
+c8c2ec2 Shell guard: Git Bash drive paths, /dev/null, and a bare backslash
 ```
 
 ## Appendix B. Thor state
