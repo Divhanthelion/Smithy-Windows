@@ -16,7 +16,7 @@ use smithy_run::runlog::LogLevel;
 use smithy_run::runner::{
     self, Agents, Deps, DesktopNotifier, Judge, NoJudge, Purpose, Runner, BUILD_TURN_SECONDS,
 };
-use smithy_run::state::{Ceilings, RunState};
+use smithy_run::state::{CeilingChanges, Ceilings, RunState};
 use smithy_run::unattended::{DeniedLog, UnattendedShell, UnattendedWrites};
 use smithy_tools::research::{SourceStore, NOTES_DIR};
 use smithy_tools::{ToolCtx, Workspace};
@@ -62,6 +62,7 @@ pub enum RunCommand {
     Resume {
         id: Option<String>,
         allow: Vec<String>,
+        changes: CeilingChanges,
         logging: Logging,
     },
     List,
@@ -76,7 +77,9 @@ smithy-agent run \"INTENT\" [--hours N] [--attempts N] [--research-minutes N]
 smithy-agent run --intent-file FILE …          the intent from a file
 smithy-agent run --resume [ID] [--allow T3 …]  carry on the newest (or named) Run;
                                                --allow clears a guardrail flag or
-                                               gives a blocked Task fresh attempts
+                                               gives a blocked Task fresh attempts;
+                                               --hours, --attempts and
+                                               --research-minutes replace the Run's own
 smithy-agent runs [--project PATH]             every Run in this Project
 
 --log off|events|full   what to keep for review (default full; SMITHY_RUN_LOG):
@@ -101,6 +104,7 @@ pub fn parse(list: bool, words: &[String]) -> Result<(RunCommand, PathBuf), Stri
     let mut id = None;
     let mut allow = Vec::new();
     let mut ceilings = Ceilings::default();
+    let mut changes = CeilingChanges::default();
     let mut it = words.iter();
     while let Some(w) = it.next() {
         let mut value = |name: &str| {
@@ -113,19 +117,22 @@ pub fn parse(list: bool, words: &[String]) -> Result<(RunCommand, PathBuf), Stri
             "--hours" => {
                 ceilings.hours = value("--hours")?
                     .parse()
-                    .map_err(|_| "--hours takes a whole number".to_string())?
+                    .map_err(|_| "--hours takes a whole number".to_string())?;
+                changes.hours = Some(ceilings.hours);
             }
             "--research-minutes" => {
                 ceilings.research_minutes = Some(
                     value("--research-minutes")?
                         .parse()
                         .map_err(|_| "--research-minutes takes a whole number".to_string())?,
-                )
+                );
+                changes.research_minutes = ceilings.research_minutes;
             }
             "--attempts" => {
                 ceilings.attempts_per_task = value("--attempts")?
                     .parse()
-                    .map_err(|_| "--attempts takes a whole number".to_string())?
+                    .map_err(|_| "--attempts takes a whole number".to_string())?;
+                changes.attempts_per_task = Some(ceilings.attempts_per_task);
             }
             "--intent-file" => {
                 let path = value("--intent-file")?;
@@ -154,7 +161,12 @@ pub fn parse(list: bool, words: &[String]) -> Result<(RunCommand, PathBuf), Stri
     let cmd = if list {
         RunCommand::List
     } else if resume {
-        RunCommand::Resume { id, allow, logging }
+        RunCommand::Resume {
+            id,
+            allow,
+            changes,
+            logging,
+        }
     } else {
         match intent.filter(|i| !i.trim().is_empty()) {
             Some(intent) => RunCommand::Start {
@@ -235,9 +247,9 @@ pub async fn run(cmd: RunCommand, project: &Path) -> Result<(), String> {
         RunCommand::Start {
             intent, ceilings, ..
         } => Runner::start(&root, &intent, ceilings, deps).await?,
-        RunCommand::Resume { id, allow, .. } => {
-            Runner::resume(&root, id.as_deref(), &allow, deps).await?
-        }
+        RunCommand::Resume {
+            id, allow, changes, ..
+        } => Runner::resume(&root, id.as_deref(), &allow, &changes, deps).await?,
         RunCommand::List => unreachable!(),
     };
     summarize(&root, &state);
@@ -493,9 +505,16 @@ mod tests {
         )
         .unwrap();
         match cmd {
-            RunCommand::Resume { id, allow, .. } => {
+            RunCommand::Resume {
+                id, allow, changes, ..
+            } => {
                 assert_eq!(id.as_deref(), Some("20260923-1712-3fa9"));
                 assert_eq!(allow, vec!["T3", "intent"]);
+                assert_eq!(
+                    changes,
+                    CeilingChanges::default(),
+                    "nothing given, nothing changed"
+                );
             }
             _ => panic!("not a resume"),
         }

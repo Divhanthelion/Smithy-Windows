@@ -418,7 +418,11 @@ async fn interrupted_and_crashed_attempts_are_set_aside_and_resumed() {
         root,
         vec![write("c2", "src.txt", "fn parse() {}"), answer("Done.")],
     );
-    let done = Runner::resume(root, None, &[], h2.deps.clone())
+    let more = smithy_run::state::CeilingChanges {
+        hours: Some(12),
+        ..Default::default()
+    };
+    let done = Runner::resume(root, None, &[], &more, h2.deps.clone())
         .await
         .unwrap();
 
@@ -429,6 +433,10 @@ async fn interrupted_and_crashed_attempts_are_set_aside_and_resumed() {
         done.stashes
     );
     assert_eq!(done.tasks["T1"].attempts, 3, "the crashed attempt counted");
+    assert_eq!(
+        done.ceilings.hours, 12,
+        "--hours on resume replaces the Run's own"
+    );
     let stashes = git(root, &["stash", "list"]);
     assert!(
         stashes.contains("interrupted") && stashes.contains("crash-T1a2"),
@@ -568,7 +576,7 @@ async fn a_resumed_run_does_not_research_the_same_question_twice() {
         root,
         vec![write("c1", "src.txt", "fn parse() {}"), answer("Done.")],
     );
-    let done = Runner::resume(root, None, &[], h2.deps.clone())
+    let done = Runner::resume(root, None, &[], &Default::default(), h2.deps.clone())
         .await
         .unwrap();
 

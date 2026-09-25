@@ -30,6 +30,29 @@ pub struct Ceilings {
     pub research_minutes: Option<u64>,
 }
 
+/// Ceilings given again with `--resume`: each one set replaces the Run's
+/// own, so a Run can be given more time, attempts or research after it began.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CeilingChanges {
+    pub hours: Option<u64>,
+    pub attempts_per_task: Option<usize>,
+    pub research_minutes: Option<u64>,
+}
+
+impl CeilingChanges {
+    pub fn apply(&self, c: &mut Ceilings) {
+        if let Some(h) = self.hours {
+            c.hours = h;
+        }
+        if let Some(a) = self.attempts_per_task {
+            c.attempts_per_task = a;
+        }
+        if let Some(m) = self.research_minutes {
+            c.research_minutes = Some(m);
+        }
+    }
+}
+
 impl Ceilings {
     /// Seconds of research the Run may spend.
     pub fn research_budget(&self) -> u64 {

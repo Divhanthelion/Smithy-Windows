@@ -260,6 +260,7 @@ impl Runner {
         root: &Path,
         id: Option<&str>,
         allow: &[String],
+        changes: &crate::state::CeilingChanges,
         deps: Deps,
     ) -> Result<RunState, String> {
         let git = Git::open(root)?;
@@ -313,6 +314,7 @@ impl Runner {
                 }
             }
         }
+        changes.apply(&mut state.ceilings);
         state.verdict = None;
         state.consecutive_blocked = 0;
         let log = DecisionLog::open(&dir.join("decisions.jsonl"));
@@ -1627,6 +1629,10 @@ The question: {q}",
             .log_dir
             .clone()
             .map(PathBuf::from)
+            // A Run resumed on another machine: its recorded log directory
+            // may be a path this one cannot use (a Windows path on Linux reads
+            // as a relative one, and would land inside the Project).
+            .filter(|d| d.is_absolute())
             .or_else(|| self.deps.log_dir.as_ref().map(|d| d.join(&self.state.id)))
             .or_else(|| RunLog::default_dir(&self.root, &self.state.id));
         let Some(dir) = dir else { return };
