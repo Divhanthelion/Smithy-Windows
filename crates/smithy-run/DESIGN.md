@@ -203,7 +203,8 @@ leaves one:
   (ordinary intents, including security tools on your own systems) is in
   `examples/jev.rs`; the stop side is read from a local file named by
   `SMITHY_GUARDRAIL_CASES`, one intent per line, and only its scores are
-  printed.
+  printed. As of 2026-09-25 that file has not been written, so the stop side
+  is uncalibrated.
 - **A sustained 429 outlasted Jev's 30-second patience** once during
   calibration, so the guardrail retries for five minutes before failing
   closed.

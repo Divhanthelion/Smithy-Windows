@@ -359,8 +359,10 @@ cases on the correct side.
 | loop (existing) | 0.93–0.98 | 0.06–0.09 | 0.85 |
 | done (existing) | finished 0.81–0.94 | unfinished 0.04–0.27 | 0.5 |
 
-The guardrail's must-stop cases are read from a local file
-(`SMITHY_GUARDRAIL_CASES`) and are not kept in the repository. "Compact near
+**The guardrail's must-stop side has not been calibrated.** The suite reads
+those cases from a local file (`SMITHY_GUARDRAIL_CASES`), and none has been
+written yet; every guardrail number here is for intents it must let through.
+The guardrail itself runs on every Run and every Task. "Compact near
 a full window" was the one low-confidence pick (0.22), which is why that
 move is a rule. A sustained 429 outlasted 30 s of retries once; the
 guardrail therefore retries for five minutes before failing closed.
