@@ -401,6 +401,108 @@ offline fallback, to be measured on Smithy's own calibration suite.
 8. **Research routing:** optionally send research Sessions to Apodex.
 9. **Housekeeping:** remove 16 orphaned partial blobs; FP8 hybrid decision.
 
+## 9. Follow-up (24 September, evening)
+
+The open items, worked after an OS update and reboot of the Thor.
+
+**Starting the server.** The first restart after the reboot refused to start:
+`Available KV cache memory: -0.71 GiB` at 0.75. On the Thor, CUDA counts page
+cache as used memory, and loading 126 GB of weights fills the page cache, so a
+budget taken as a fraction of memory comes out short. The launch script now
+fixes the KV cache at 8 GiB (`--kv-cache-memory-bytes`; 292,481 tokens, 1.12 ×
+256k). A failed or stopped GPU process also leaves its memory counted as used
+(93 GB once, 10 GB after the Nano test) until
+`echo 3 > /proc/sys/vm/drop_caches`.
+
+**Cache reporting (1).** With `--enable-prompt-tokens-details`, responses
+carry `cached_tokens`. On a 16k-token prompt: 14,976 of 16,030 served from
+cache on the repeat, and time to first token 9.05 s cold → 1.0 s warm.
+
+**Co-residency (2).** `~/thor-setup/bench.py`: three prompts behind a
+16k-token shared prefix, each sent twice, temperature 0, 400 tokens. Decode
+tok/s:
+
+| Flash-Next with | code | prose | JSON | Memory used / available |
+|---|---|---|---|---|
+| nothing | 35.4 | 22.2 | 38.3 | 101 / 20 GB |
+| Nemotron-3-Nano-4B loaded, idle | 35.4 | 22.2 | 38.3 | 114 / 8 GB |
+| Nemotron-3-Nano-4B, 2 requests running | 31.2 | 8.3–18.8 | 14.4 | 114 / 8 GB |
+
+An idle neighbour costs nothing; a busy one costs Flash-Next 12–62%, and
+itself decodes at only ~16 tok/s for two streams. The two share memory
+bandwidth, which is what decoding spends. Apodex (23 GB of weights) does not
+fit beside Flash-Next at all (20 GB available). So: small models may stay
+resident for occasional use (speech, embeddings); nothing should run
+continuously beside a Run; Apodex is a swap, not a neighbour.
+
+**Shorter turns (3).** Commit `893bff2`: the Task's own checks run every six
+tool calls once a file has changed, and the turn ends the first time they
+pass; build turns return to the runner after 20 minutes.
+
+**Settings (4).** `provider.json` names `qwen3.8-flash-next`.
+
+**OS updates (6).** 31 packages (none kernel, L4T or Docker), then a reboot.
+
+**Von vs Jev (7).** Commit `c800125`: `JEV_ENDPOINT` / `JEV_MODEL` /
+`JEV_API_KEY` point Smithy at any server with the same API; the gateway key is
+never sent elsewhere. On Smithy's 63-case suite (`--example jev`), on the same
+evening:
+
+| | Wrong side | Notes |
+|---|---|---|
+| Jev | 1 of 63 | the one was a 429, not a wrong answer |
+| Von 1.2 (`von serve`, GPU) | 32 of 63 | nearly every answer 0.2–0.4; flagged none of the destructive commands, loops or weakened tests |
+
+Von is not a fallback for these decisions.
+
+**Research on Apodex (8).** Not pursued: it cannot be resident beside
+Flash-Next, and a model swap costs ~10 minutes each way.
+
+**Housekeeping (9).** 19 partial downloads (381 MB) removed, and the two
+superseded copies of Flash-Next (230 GB) deleted. The FP8 hybrid is not
+worth building while there is no memory pressure.
+
+The laptop, too, had only its old static address on the router's port and
+no IPv4 route: Jev (IPv4-only) was unreachable until a second address with
+the router as gateway was added.
+
+**Second real Run (5).** The same intent, from a clean `master`, on the new
+server with shorter turns: run `20260924-2200-4e00`, **done — every Task's
+Checks pass**, unattended.
+
+| | First Run (23 Sep) | Second Run (24 Sep) |
+|---|---|---|
+| Result | 1 of 6 Tasks, stopped by hand | 3 of 3 Tasks, done |
+| Time | ~3.5 h | 2 h 23 m |
+| Prompt tokens | 14.8 M, none cached | 6.2 M, 91% from cache |
+| Research | 90 min, full method on every question | 36 min: two lookups (8 min), one decision (20 min) |
+
+Planning 10 min; T1 24 min (13 grammar tests, one round past the 20-minute
+turn); T2 63 min (11 fraction tests; it rewrote three of T1's assertions from
+"rejected" to exact values, as its task required); T3 10 min (a CLI and 13
+integration tests). The finished library: 49 tests pass; `iso-duration
+P3DT4H30M` prints `275400`; `P1Y` is refused with the reason. The early check
+ended three turns the moment their Task's checks passed.
+
+What it found:
+
+- **The reply cap.** About 30 of T2's minutes went to three replies that
+  thought for 15–16k tokens, designing a whole file, and hit the 16,384-token
+  cap before writing it. The thinking is never replayed to the model, so each
+  retry began again, and the session's correction ("give ONLY the final
+  answer") pointed the wrong way. Fixed in `fa9d717` and `99044be`: no cap for
+  the local server, a reply in flight at the turn limit may finish (15-minute
+  grace), a cut-off reply is told what was lost and to take one concrete step,
+  and the task prompt says up front to work in small steps and write plans
+  down.
+- **Which tests are protected.** T2 spent a long stretch deciding whether it
+  could change a test T1 had written. The task prompt now names the Run's base
+  commit.
+- **The shell guard refuses ordinary reads.** Nine read-only commands (`grep`
+  and `sed -n` on `src/`, `ls -R src`, `cargo test … | tail`) were refused as
+  "reaching outside the Project", most likely on `2>/dev/null`, Git Bash
+  paths (`/c/Users/…`) and `~`. Open.
+
 ## Appendix A. Commits
 
 ```
@@ -426,6 +528,11 @@ eca3e11 Runs: research scales with the question, not a cap; post-mortem
 acd62fe Run logs: every request, tool call and check timed; every conversation kept
 f0b78f8 Post-mortem: keep the log row inside its table
 c992ab4 Research: Jev reports, it does not gate
+85edae5 Report: unattended Runs and the Thor, 23-24 September
+893bff2 Runs: a build turn ends when its Task's checks pass
+c800125 Jev: the endpoint and model can point at a compatible server
+fa9d717 Limits that fired on good work: the reply cap, and a reply cut off in flight
+99044be Prompts: say why thinking is lost, and which tests are the Run's own
 ```
 
 ## Appendix B. Thor state
@@ -437,7 +544,7 @@ c992ab4 Research: Jev reports, it does not gate
 | User | a regular account in the `docker` group |
 | Rust | 1.98.1 (rustup, user-local) |
 | Server | container `flash-next`, port 8000, detached |
-| Start command | `FLASHNEXT_MODEL_REV=7b719225242aacd3dbd3f9407468c2ee9a9d2594 FLASHNEXT_PORT=8000 FLASHNEXT_MAX_SEQS=1 FLASHNEXT_CONTEXT=262144 FLASHNEXT_GPU_MEM=0.75 FLASHNEXT_DETACH=1 FLASHNEXT_CONTAINER=flash-next ./serving/start-qwen38-flash-next-fast.sh` (in `~/NemoClaw-Thor`) |
+| Start command | `~/thor-setup/start-flash-next.sh`: the recipe's `serving/start-qwen38-flash-next-fast.sh` with base revision `7b719225…`, port 8000, one slot, 256k, detached, `--enable-prompt-tokens-details`, and an 8 GiB KV cache (`FLASHNEXT_KV_GIB`). `FLASHNEXT_NO_RM=1` keeps a failed container's logs. Clear caches first if `free -g` shows memory held. |
 | Caches | `~/thor-hf-cache` (HF home, token file), `~/thor-vllm-cache`, `~/thor-torch-cache`, `~/thor-flashinfer-cache` |
 | Setup scripts and logs | `~/thor-setup/` |
 | Monitor | `~/sysmon-tui/target/release/sysmon-tui` (`ssh -t thor …`) |
