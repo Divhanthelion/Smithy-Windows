@@ -1,86 +1,128 @@
 # Teaching a local model to work while we sleep
 
-*A field report on Smithy's unattended Runs, the first real run on a Jetson
-AGX Thor, and what it took to make the Thor fit for the job. 23–24 September
-2026.*
+*A field report on Smithy's unattended Runs: two real runs on a Jetson AGX
+Thor, what the first one broke, and what it took for the second to finish.
+23–25 September 2026.*
 
 ---
 
 The goal was simple to say: give Smithy one sentence — *build X* — walk away,
 and come back to a branch of commits whose tests pass and a report that says
-what happened. No babysitting, no "shall I proceed?".
+what happened. No babysitting, no "shall I proceed?". And do it on a machine
+on the desk, with a model that runs locally, costs nothing per token, and
+sends nothing anywhere.
 
 The hard part is not getting a model to write code. It is knowing, the next
-morning, whether the code is real. So everything we built starts from one
-rule: **the compiler and the tests decide when work is done — not the model,
-and not the judge model watching it.** A task is finished when the runner has
-run its checks itself, the rest of the suite has not regressed, and no test
-that existed before the run was weakened, skipped or deleted to get there.
-Only then does it commit.
+morning, whether the code is real. So everything starts from one rule: **the
+compiler and the tests decide when work is done — not the model, and not the
+judge model watching it.** A task is finished when the runner has run its
+checks itself, the rest of the suite has not regressed, and no test that
+existed before the run was weakened, skipped or deleted to get there. Only
+then does it commit. The model can read git history but cannot commit, reset
+or push; every commit on the branch is one the checks earned.
 
-Around that rule sit the things an unattended agent needs. A planner turns
-the intent into tasks, each with the exact test command that proves it. Git
-belongs to the runner: the model may read history but cannot commit, reset or
-push, so every commit on the branch is one the checks earned. Jev —
-TypeSafe's fast "decision" model — watches for loops, asks whether an answer
-is really finished, catches tests being quietly loosened, and stops the run
-outright if an intent looks illegal or harmful. Research is checked too: every
-page the model reads is saved, and every quote in its research notes is
-matched mechanically against the page it came from.
+Around that rule sit the things an unattended agent needs: a planner that
+turns the intent into tasks, each with the exact test command that proves it;
+Jev — TypeSafe's fast decision model — watching for loops, for answers that
+claim to be finished and aren't, for tests being quietly loosened, and for
+intents that shouldn't be built at all; and research that can be checked,
+where every page the model reads is saved and every quote in its notes is
+matched against the page it came from.
 
-**The first real run was humbling, usefully.** It was a toy: a parser for
-ISO 8601 durations, maybe two hundred lines. It took hours and heated the
-Thor. The post-mortem found ten causes. The first was ours — the run was
-launched from a shell that could not see `cargo`, and an hour went by before
-the failure said so. Others were design: the planner split a small library
-into six tasks and attached a research question to every one, and each
-question ran the full, adversarial research method for half an hour. And one
-was the server: every request re-computed its whole ~52,000-token prompt,
-because the model server had no prefix caching. 284 requests, 14.8 million
-prompt tokens, none of them served from cache.
+## The first run
 
-But the parts that mattered worked. The one task that finished was committed
-only after the runner saw its build pass, its twelve tests pass, and the full
-suite pass. Every judgment Jev made was right — including the call to stop and
-ask a human when the toolchain was missing. And the research was genuinely
-good: one note, with thirty findings each quoted verbatim from primary sources
-and verified, caught a real bug in the code the previous task had committed.
+It was a toy on purpose: a Rust library that parses ISO 8601 durations like
+`P3DT4H30M` into a `Duration`, with tests and a small command-line tool. It
+took three and a half hours, finished one task of six, and was stopped by
+hand because the Thor was running hot.
 
-**So we fixed the causes, not the symptoms.** A missing toolchain now fails
-in a second. Research depth is now proportional to the question — a quick
-lookup, a decision, or a deep investigation — within a budget that grows with
-the run, so big projects get more research, not less. Jev now *reports* how
-much it thinks a question needed outside sources, instead of silently
-deciding whether to look. Every request, tool call and check is logged with
-timings, and every conversation is kept, so the next post-mortem will not have
-to be reconstructed from fragments.
+The post-mortem found ten causes, and most were ours. The run was launched
+from a shell that couldn't see `cargo`. The planner split a small library into
+six tasks and gave every one a research question, and every question got the
+full, adversarial research method for half an hour. One turn ran for 57
+minutes before anything was checked, while the model wrote the whole library
+inside the first task and then polished it. And the server recomputed its
+entire ~52,000-token prompt on every request, because prefix caching was off:
+14.8 million prompt tokens, none from cache. That was the heat.
 
-**Then the machine.** Moving the Thor to a newer, community-tuned serving
-recipe with prefix caching turned on cut a repeated 12,000-token request from
-21.9 to 10.9 seconds, with 90% of the prompt served from cache. Along the way
-we found the Thor downloading at 1.5 MB/s over a 2.4 GHz Wi-Fi link; one
-cable to the router made it 79–100 MB/s. A day of model downloads became an
-hour.
+The parts that mattered held. The one finished task was committed only after
+the runner saw its build and tests pass. Every call Jev made was right. And
+the research was genuinely good — one note, thirty findings each quoted
+verbatim from primary sources, caught a real bug in code the previous task had
+committed.
 
-The model now serves at 25–42 tokens per second depending on the work, in
-92 GiB of the Thor's 122, leaving room for speech, embeddings and a second,
-research-specialised model — whose real cost to the first we will measure
-rather than guess.
+## Fixing causes, not symptoms
 
-The next run is the same small intent, on the new server, with the new
-planner and full logs. The bar: done in well under an hour, cool, with the
-cache doing its job — and a report the next morning we can believe.
+A missing toolchain now fails in a second. Research depth is sized to the
+question — a quick lookup, a decision, a deep investigation — within a budget
+that grows with the run. Jev *reports* how much a question needed outside
+sources instead of silently deciding whether to look. A task's checks now run
+while the model works, and its turn ends the moment they pass. Every request,
+tool call and check is logged with timings.
+
+Then the machine. A community-tuned serving recipe with prefix caching made a
+repeated 16,000-token prompt start answering in one second instead of nine.
+The Thor had been downloading over 2.4 GHz Wi-Fi at 1.5 MB/s; one cable to the
+router made it 80–100 MB/s. And after a reboot the server refused to start at
+all — the Thor counts page cache as used memory, which throws off the server's
+own arithmetic — until we gave it a fixed amount of memory for its cache
+instead of a share of what looked free.
+
+We also measured things we'd been guessing at. A second, smaller model loaded
+beside the main one costs nothing while idle, and 12–62% of the main model's
+speed while busy — they share the same memory bandwidth. An open-source
+stand-in for Jev got half our test cases wrong; Jev got every one it answered
+right.
+
+## The second run
+
+Same intent, clean repository, new server. **It finished.** Three tasks, three
+commits, 49 tests passing, a working command-line tool, in 2 hours 23
+minutes — 91% of the prompt served from cache, and each task stayed inside its
+own lane. Three times the model's turn ended the instant its tests went green, which
+is exactly the discipline the first run lacked.
+
+It was not an hour, and the reason is the most useful thing we learned. About
+thirty minutes of the second task went to three replies in which the model
+worked out an entire file in its head — 16,000 tokens of thinking — and hit
+Smithy's per-reply output limit a moment before writing it down. Its thinking
+isn't shown back to it, so each retry started from nothing, and Smithy's
+recovery message, written for an older model stuck saying "Done. Done.", told
+it to wrap up in two sentences.
+
+That limit was guarding against runaway output. The model never produced any.
+Every real problem across both runs — the loops, the false "done", the missing
+toolchain — was caught by something that looks at *what* the model is doing:
+Jev, or the tests. The blunt limits on size and time were the ones doing
+damage. So the reply cap is gone for the local model, a reply in progress
+when the turn's clock runs out now gets to finish, and a cut-off reply is told
+plainly what was lost and to take one concrete step at a time. The rule we
+took from it: **a limit should be a backstop that never fires during good
+work. If it fires on good work, it is set wrong.**
+
+## What it is, honestly
+
+A local model on a Thor writes code at 25–35 tokens a second. Work a hosted
+frontier model does in minutes takes this one closer to half an hour, so every mistake
+costs half an hour, and watching it live is painful. Overnight, on a machine
+that is otherwise idle, private and free, that trade looks different — which
+is the point of making it run unattended.
+
+The next run is the same intent on the fixed build, after one more repair:
+the second run's report showed Smithy's shell guard refusing nine perfectly
+ordinary commands, like `grep` on the project's own source. The bar hasn't
+moved: done while we sleep, and a report the next morning we can believe.
 
 ---
 ---
 
 # Technical report
 
-**Period:** 2026-09-23 17:36 UTC – 2026-09-24 ~20:30 UTC
-**Repository:** `Smithy-Windows` (local; not pushed), 21 commits from
-`736e89a` to `c992ab4`, +10,223 lines across 44 files, 535 tests passing
-(smithy-agent 267, smithy-tools 153 + 7, smithy-run 57 + 14 end-to-end,
-smithy-cli 9).
+**Period:** 2026-09-23 17:36 UTC – 2026-09-25 00:30 UTC
+**Repository:** `Smithy-Windows` (private GitHub), 29 commits from `736e89a`
+to the commit carrying this report, +11,217 lines across 49 files, 540 tests
+passing (smithy-agent 269 + 28 integration, smithy-tools 153 + 7, smithy-run
+60 + 14 end-to-end, smithy-cli 9).
 **Hardware:** NVIDIA Jetson AGX Thor, 128 GB unified memory (122.8 GiB
 visible), JetPack 7.1 / L4T R38, 1 TB NVMe; Windows 11 laptop as the
 Smithy host.
@@ -100,11 +142,20 @@ Smithy host.
 - **Jev calibrated** for five new decisions; 43 of 43 labelled cases on the
   correct side of their thresholds.
 - **First real Run** on the Thor completed 1 of 6 tasks before being stopped
-  for heat. Post-mortem identified ten causes; eight fixed, two open.
-- **Thor re-served** with a tuned vLLM recipe: prefix caching works (90% hit
-  on a repeated prompt, 2.0× faster), 92 GiB total footprint, 25–42 tok/s.
+  for heat. Post-mortem identified ten causes; all ten are now fixed.
+- **Second real Run** of the same intent **finished**: 3 of 3 tasks, 2 h
+  23 min, 91% of 6.2 M prompt tokens from cache, 49 tests in the finished
+  library (§9). It exposed a per-reply output cap that cost ~30 minutes (now
+  removed) and a shell guard that refuses ordinary reads (open).
+- **Thor re-served** with a tuned vLLM recipe: prefix caching works and is
+  now reported per request (93% of a 16k prompt; time to first token 9.05 s →
+  1.0 s), 8 GiB fixed KV cache (292k tokens), 22–38 tok/s decode.
+- **Co-residency measured:** an idle second model costs nothing; a busy one
+  costs Flash-Next 12–62%. Apodex does not fit beside it.
+- **Von vs Jev** on Smithy's 63-case suite: Von 32 wrong, Jev 0 (one 429).
 - **Network:** Thor was on 2.4 GHz Wi-Fi (144 Mbit/s link). Wired: 79–100 MB/s.
-- **Model inventory** downloaded for the next phase (~210 GB).
+- **Model inventory** downloaded for the next phase (~210 GB); 230 GB of
+  superseded copies removed.
 
 ## 2. Goal and constraints
 
@@ -238,6 +289,10 @@ a full window" was the one low-confidence pick (0.22), which is why that
 move is a rule. A sustained 429 outlasted 30 s of retries once; the
 guardrail therefore retries for five minutes before failing closed.
 
+Rerun on 2026-09-24 with the suite grown to 63 cases (shell 20, loop 6,
+done 6, guardrail 10, research 6, next 5, cheat 6, answered 4): 62 on the
+correct side; the 63rd was a 429 from the gateway, not a wrong answer.
+
 ## 5. First real Run
 
 Full post-mortem: `crates/smithy-run/postmortems/2026-09-23-iso8601-trial.md`.
@@ -278,7 +333,7 @@ findings verified — and the second caught a bug in T1's committed code.
 | 6 | `cite_check` rejected dense quotes | Fixed |
 | 7 | `git stash list` refused | Fixed |
 | 8 | No prefix caching on vLLM | Fixed on the new server (§6) |
-| 9 | One 57-minute turn before any check; scope creep into later tasks | Open |
+| 9 | One 57-minute turn before any check; scope creep into later tasks | Fixed: the task's checks run as the model works and end the turn when they pass; 20-minute build turns (`893bff2`) |
 | 10 | No conversation logs | Fixed: Run logs |
 
 ## 6. Serving on the Thor
@@ -320,6 +375,11 @@ Model load: 79.42 GiB in 438 s; engine init 172 s. A 47.7 GiB per-layer
 embedding table stays file-backed (mmap, random access); weights plus table
 (127 GiB) exceed memory by design.
 
+After a reboot the same 0.75 gave a KV budget of −0.71 GiB and the server
+refused to start: CUDA on the Thor counts page cache as used, and loading the
+weights fills it. The KV cache is now a fixed 8 GiB (`--kv-cache-memory-bytes`;
+292,481 tokens, 1.12 × 256k) — see §9.
+
 ### 6.3 Prefix caching
 
 Two identical requests, 12,077-token prompt, 256 completion tokens:
@@ -329,9 +389,9 @@ Two identical requests, 12,077-token prompt, 256 completion tokens:
 | First | 21.9 s | 0 |
 | Second | 10.9 s | 10,816 of 12,077 (90%) |
 
-The response `usage` still omits `prompt_tokens_details`; adding
-`--enable-prompt-tokens-details` is needed for Smithy's report to show cache
-rates.
+At the time the response `usage` omitted `prompt_tokens_details`. With
+`--enable-prompt-tokens-details` it is reported per request, and Smithy's
+report shows the rate: 91% over the second Run's 214 requests (§9).
 
 ### 6.4 Generation speed
 
@@ -380,26 +440,28 @@ Hugging Face API double-counted large files.
 LoRA coding fine-tune of Qwen2.5-Coder-7B, not a calibrated decision model; a
 third-party description attributing Jev-like capabilities, ECE figures and
 latencies to it was not supported by any source. Von reports 72.0% against
-Jev's 96.6% on a 49-task third-party decision benchmark; it is a candidate
-offline fallback, to be measured on Smithy's own calibration suite.
+Jev's 96.6% on a 49-task third-party decision benchmark. Measured on Smithy's
+own suite it put 32 of 63 cases on the wrong side (§9), so it is not an
+offline fallback for these decisions.
 
 ## 8. Open items
 
-1. **Cache reporting:** add `--enable-prompt-tokens-details` so Runs record
-   cached tokens.
-2. **Co-residency cost:** benchmark Flash-Next alone, then with the small
-   models (≈17–20 GB), then with Apodex; decide what stays resident.
-3. **Turn length (post-mortem #9):** shorter turns so checks run before a
-   model polishes for an hour, and so work stays inside the current task.
-4. **Smithy settings:** model name `qwen3.8-flash-next`.
-5. **Fresh trial Run** of the same intent on the new server, new planner,
-   full logs. Success: under an hour, cached tokens reported, most of the
-   prompt served from cache.
-6. **Thor OS updates** (10 pending, 4 security) — after downloads, with a
-   reboot window.
-7. **Von vs Jev** on the 43-case suite (endpoint made configurable).
-8. **Research routing:** optionally send research Sessions to Apodex.
-9. **Housekeeping:** remove 16 orphaned partial blobs; FP8 hybrid decision.
+The nine items this section listed on 24 September (cache reporting,
+co-residency, turn length, settings, a fresh trial Run, OS updates, Von,
+research routing, housekeeping) were all worked the same evening; §9 has the
+results. What remains:
+
+1. **Shell guard false positives.** The second Run refused nine ordinary
+   read-only commands as reaching outside the Project, most likely on
+   `2>/dev/null`, Git Bash paths (`/c/Users/…`) and `~`.
+2. **A third trial Run** on the fixed binary, to confirm the reply-cap fix
+   in practice; without that loss the second Run would have taken about
+   1 h 50 m.
+3. **Memory release on the Thor.** A GPU process that stops leaves its memory
+   counted as used until the page cache is dropped (needs sudo). A Run cannot
+   restart the server unattended until this is handled.
+4. **The first trial's under-hour target** was not met by the second Run
+   (2 h 23 m); research (36 min) and one 63-minute task dominate.
 
 ## 9. Follow-up (24 September, evening)
 
@@ -533,6 +595,7 @@ c992ab4 Research: Jev reports, it does not gate
 c800125 Jev: the endpoint and model can point at a compatible server
 fa9d717 Limits that fired on good work: the reply cap, and a reply cut off in flight
 99044be Prompts: say why thinking is lost, and which tests are the Run's own
+a93e551 Report: the nine open items, and the second real Run
 ```
 
 ## Appendix B. Thor state
