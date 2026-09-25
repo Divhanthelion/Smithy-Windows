@@ -1094,11 +1094,18 @@ fn is_transient(error: &ProviderError) -> bool {
 /// was cut off before writing it, three times. Its thinking is not sent back,
 /// so it cannot pick up where it stopped; what helps is a smaller next step.
 fn cut_off_note() -> String {
-    "Your previous reply ran out of room before it finished, and everything in it — \
-     your thinking included — is gone. Do not plan the whole change again in one \
-     reply. Take the next concrete step now: one tool call (write or edit one file, \
-     or one part of a large file), then continue step by step. If the work is \
-     already done, give a short final answer."
+    "Your last reply hit the output limit before it finished. It made no tool call, so \
+     nothing was written or run, and the reasoning in it is lost: your reasoning is never \
+     shown back to you in later replies. What survives is this conversation and the files \
+     on disk.\n\n\
+     Working the whole change out in one reply is what ran out of room, so do not try that \
+     again. Instead:\n\
+     1. Make one tool call now — the next concrete step.\n\
+     2. Write a large file in parts: a skeleton first, then one function or group of tests \
+     per edit.\n\
+     3. If the design needs thought, write the plan down first — a comment at the top of \
+     the file, or the `todo` tool — so it is still there on your next reply.\n\n\
+     If the work is already done, answer in a few lines instead."
         .to_string()
 }
 

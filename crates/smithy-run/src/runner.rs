@@ -712,6 +712,7 @@ impl Runner {
             handoff.as_deref(),
             attempt,
             max_attempts,
+            &self.state.base,
         );
         let mut rounds: Vec<(String, String)> = Vec::new();
         let mut signatures: Vec<String> = Vec::new();

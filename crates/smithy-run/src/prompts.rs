@@ -20,17 +20,23 @@ pub fn task_prompt(
     handoff: Option<&str>,
     attempt: usize,
     max_attempts: usize,
+    base: &str,
 ) -> String {
+    let base = &base[..base.len().min(8)];
     let mut out =
         format!(
         "{UNATTENDED}\n\n## The intent\n\n{}\n\n## The plan\n\n{}\n## Your task: {} — {}\n\n{}\n\n\
          Attempt {attempt} of {max_attempts}.\n\n\
-         ## Done means these pass\n\nThe runner runs them itself after you answer; your word \
-         that they pass is not enough.\n\n{}\n\nThe full suite (`{}`) must also keep passing, and \
-         tests that existed before this Run may not be weakened, skipped or deleted. Tests an \
-         earlier Task of this Run wrote are not protected: when this Task changes the behaviour \
-         they pin (a case they said is rejected that this Task must accept), update them and say \
-         so in your answer.\n",
+         ## Done means these pass\n\n{}\n\n\
+         The runner runs them itself — as you work, and again when you answer — and your turn \
+         ends the first time they pass. Your word that they pass is not enough.\n\n\
+         The full suite (`{}`) must keep passing too.\n\n\
+         **Which tests you may change.** This Run began at commit `{base}`. Tests that were in \
+         the Project at `{base}` may not be weakened, skipped or deleted. Tests added since \
+         then were written by earlier Tasks of this Run: when this Task changes the behaviour \
+         one of them pins (a case it says is rejected that this Task must accept), update that \
+         test and say so in your answer. `git diff --stat {base}` shows what this Run has \
+         added.\n",
         plan.intent.trim(),
         plan.render(done),
         task.id,
@@ -53,14 +59,18 @@ pub fn task_prompt(
     }
     out.push_str(
         "\n## How to work\n\n\
-         - This task only. Later tasks have their own turn. The runner runs this task's checks \
-         as you go and ends the turn the first time they pass, so build what they need and nothing \
-         more.\n\
+         - This task only: build what its checks need and nothing more. Later tasks have their \
+         own turn.\n\
+         - Work in small steps. Your reasoning is not shown back to you on later replies — only \
+         your tool calls, their results and the files are — so do not design a whole file in \
+         your head. Write a large file in parts (a skeleton, then a function or a group of tests \
+         per edit), and if the design needs thought, write the plan down first, as a comment or \
+         with the `todo` tool.\n\
+         - Run the checks yourself as you go. When they pass, answer with a few lines on what \
+         you changed.\n\
          - Do not use git to change anything (commit, checkout, reset, stash…): the runner commits \
          when the checks pass. Read-only git is fine.\n\
          - Do not edit `.smithy/runs/`.\n\
-         - Run the checks yourself before you answer. When they pass, answer with a few lines on \
-         what you changed.\n\
          - If something outside the Project is genuinely required (credentials, a service, a \
          decision only a person can make), say exactly what and stop.\n",
     );
@@ -192,6 +202,7 @@ mod tests {
             Some("tried X"),
             2,
             3,
+            "abcdef0123456789",
         );
         for needle in [
             "unattended Run",
@@ -201,6 +212,8 @@ mod tests {
             "n.md",
             "tried X",
             "Do not use git",
+            "began at commit `abcdef01`",
+            "not shown back to you",
         ] {
             assert!(p.contains(needle), "missing {needle}:\n{p}");
         }
