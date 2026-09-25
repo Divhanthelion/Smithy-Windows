@@ -77,6 +77,19 @@ pub fn task_prompt(
     out
 }
 
+/// Where probes and one-off scripts go. Appended to build and research
+/// prompts: in the hebrew-calendar Run, a model with nowhere to put a probe
+/// wrote it into the source tree, and research sessions left `examples/`
+/// folders behind.
+pub fn scratch_note(scratch: &std::path::Path) -> String {
+    format!(
+        "\n## Scratch\n\nProbes, one-off scripts and anything you don't mean to keep go in \
+         `{}` (create it if needed), never in the Project. You may delete what you put there, and \
+         files you created yourself.\n",
+        scratch.display().to_string().replace('\\', "/")
+    )
+}
+
 /// After a failed round of Checks.
 pub fn feedback(round: usize, max_rounds: usize, failed: &[&CheckOutcome], extra: &str) -> String {
     let mut out = format!("The checks do not pass yet (round {round} of {max_rounds}).\n\n");
@@ -140,10 +153,13 @@ pub fn implied_question(task: &Task) -> String {
 
 /// The research question when a build keeps failing on an outside fact.
 pub fn failure_question(task: &Task, failure: &CheckOutcome) -> String {
+    // The first line that is an error, not the first line: cargo's first line
+    // is "Compiling …", and the hebrew-calendar Run was sent to research that.
     let first = failure
         .excerpt
         .lines()
-        .find(|l| !l.trim().is_empty())
+        .find(|l| crate::check::is_error_line(l))
+        .or_else(|| failure.excerpt.lines().find(|l| !l.trim().is_empty()))
         .unwrap_or(&failure.verdict);
     format!(
         "Building \"{}\", this keeps failing: {}. What do the primary sources (docs, spec, source) \
@@ -174,6 +190,29 @@ pub fn note_path(date: &str, task: Option<&str>, question: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The hebrew-calendar Run's failure: cargo says "Compiling" before it
+    /// says what is wrong, and the question must carry what is wrong.
+    #[test]
+    fn a_failure_question_quotes_the_error_not_the_first_line() {
+        let plan = Plan::parse(
+            "intent = \"x\"\ntoolchain = \"rust\"\n[[task]]\nid = \"T1\"\ntitle = \"Molad\"\n[[task.check]]\nkind = \"test\"\nrun = \"cargo test molad_\"\nmin_tests = 1\n",
+        )
+        .unwrap();
+        let failure = CheckOutcome {
+            spec: plan.tasks[0].checks[0].clone(),
+            passed: false,
+            verdict: "exit 101".into(),
+            tests: None,
+            excerpt: "   Compiling hebrew_core v0.1.0 (/home/user/code/hebrew-calendar/hebrew_core)\n\
+                      error[E0425]: cannot find function `molad_parts` in this scope\n"
+                .into(),
+            seconds: 3,
+        };
+        let q = failure_question(&plan.tasks[0], &failure);
+        assert!(q.contains("error[E0425]"), "{q}");
+        assert!(!q.contains("Compiling"), "{q}");
+    }
 
     #[test]
     fn note_paths_are_dated_tasked_and_slugged() {

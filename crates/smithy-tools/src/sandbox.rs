@@ -845,7 +845,14 @@ fn path_leaves_project(path: &str, root: &Path) -> bool {
         root.join(raw)
     };
     match lexical_normalize(&candidate) {
-        Ok(normalized) => normalized.strip_prefix(root).is_err(),
+        // The Session's own scratch directory counts as inside: the system
+        // prompt names it as the place for probes and one-off scripts, and in
+        // the hebrew-calendar Run a model told to use it was refused, wrote its
+        // probe into the source tree instead, and could not delete it.
+        Ok(normalized) => {
+            normalized.strip_prefix(root).is_err()
+                && normalized.strip_prefix(scratch_dir_for(root)).is_err()
+        }
         Err(_) => true,
     }
 }
@@ -1096,6 +1103,21 @@ mod tests {
 
     fn project() -> &'static Path {
         Path::new("/tmp/smithy-proj")
+    }
+
+    /// The Session's scratch directory is somewhere the model may work; the
+    /// rest of the temp directory is not.
+    #[test]
+    fn the_scratch_directory_counts_as_inside() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let scratch = scratch_dir_for(root);
+        let s = scratch.display().to_string().replace('\\', "/");
+        assert!(!command_leaves_project(&format!("mkdir -p {s} && cat > {s}/probe.rs"), root));
+        assert!(!command_leaves_project(&format!("rustc {s}/probe.rs -o {s}/probe"), root));
+        let other = std::env::temp_dir().join("smithy").join("someone-else");
+        let o = other.display().to_string().replace('\\', "/");
+        assert!(command_leaves_project(&format!("cat {o}/x"), root), "only this Project's scratch");
     }
 
     /// Commands the second real Run was refused, verbatim but for the root.

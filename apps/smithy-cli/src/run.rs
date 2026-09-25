@@ -17,7 +17,7 @@ use smithy_run::runner::{
     self, Agents, Deps, DesktopNotifier, Judge, NoJudge, Purpose, Runner, BUILD_TURN_SECONDS,
 };
 use smithy_run::state::{CeilingChanges, Ceilings, RunState};
-use smithy_run::unattended::{DeniedLog, UnattendedShell, UnattendedWrites};
+use smithy_run::unattended::{DeniedLog, UnattendedShell, UnattendedWrites, Written};
 use smithy_tools::research::{SourceStore, NOTES_DIR};
 use smithy_tools::{ToolCtx, Workspace};
 
@@ -342,7 +342,8 @@ pub async fn research_once(words: &[String]) -> Result<(), String> {
         .or_else(|| smithy_agent::load_skill(&root, "research"))
         .map(|s| s.injection())
         .unwrap_or_default();
-    let prompt = smithy_run::prompts::research_prompt(&procedure, &question, None, &path);
+    let prompt = smithy_run::prompts::research_prompt(&procedure, &question, None, &path)
+        + &smithy_run::prompts::scratch_note(&smithy_tools::scratch_dir_for(&root));
 
     let started = std::time::Instant::now();
     let outcome = session.run_turn(&prompt, None).await;
@@ -424,10 +425,12 @@ impl Agents for CliAgents {
             Purpose::Research { task, .. } => task.clone(),
             Purpose::Plan => None,
         };
+        let written = Written::default();
         registry.add_hook(Box::new(UnattendedShell {
             jev: self.jev.clone(),
             denied: denied.clone(),
             task: task.clone(),
+            written: written.clone(),
         }));
         registry.add_hook(Box::new(UnattendedWrites {
             only_under: match purpose {
@@ -436,6 +439,7 @@ impl Agents for CliAgents {
             },
             denied,
             task,
+            written,
         }));
 
         let workspace = Workspace::open(&root)?;

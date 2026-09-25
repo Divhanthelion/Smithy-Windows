@@ -140,7 +140,7 @@ fn judge(
     }
 }
 
-fn is_error_line(line: &str) -> bool {
+pub(crate) fn is_error_line(line: &str) -> bool {
     let l = line.trim_start();
     l.starts_with("error")
         || l.starts_with("FAILED")

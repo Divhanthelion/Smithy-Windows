@@ -740,6 +740,9 @@ impl Runner {
             max_attempts,
             &self.state.base,
         );
+        message.push_str(&prompts::scratch_note(&smithy_tools::scratch_dir_for(
+            &self.root,
+        )));
         let mut rounds: Vec<(String, String)> = Vec::new();
         let mut signatures: Vec<String> = Vec::new();
         let mut researched = false;
@@ -1471,7 +1474,7 @@ The question: {q}",
             question,
             task.map(|t| (t.id.as_str(), t.title.as_str())),
             &path,
-        );
+        ) + &prompts::scratch_note(&smithy_tools::scratch_dir_for(&self.root));
         Ok(ResearchJob {
             question: question.to_string(),
             need,

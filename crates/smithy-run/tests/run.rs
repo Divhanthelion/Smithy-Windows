@@ -85,10 +85,12 @@ impl Agents for ScriptedAgents {
     async fn session(&self, purpose: &Purpose, denied: DeniedLog) -> Result<Session, String> {
         self.purposes.lock().unwrap().push(purpose.clone());
         let mut registry = Registry::core();
+        let written = smithy_run::unattended::Written::default();
         registry.add_hook(Box::new(UnattendedShell {
             jev: None,
             denied: denied.clone(),
             task: None,
+            written: written.clone(),
         }));
         registry.add_hook(Box::new(UnattendedWrites {
             only_under: match purpose {
@@ -97,6 +99,7 @@ impl Agents for ScriptedAgents {
             },
             denied,
             task: None,
+            written,
         }));
         let ctx = ToolCtx::new(Workspace::open(&self.root)?);
         let own = match purpose {
