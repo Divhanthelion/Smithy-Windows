@@ -217,7 +217,7 @@ pub async fn run(cmd: RunCommand, project: &Path) -> Result<(), String> {
             prepared,
             project: project.clone(),
             jev: quick_jev.clone(),
-            research_thinking: true,
+            research_thinking: None,
         }),
         judge,
         notifier: Arc::new(DesktopNotifier),
@@ -268,7 +268,7 @@ fn summarize(root: &Path, state: &RunState) {
 pub async fn research_once(words: &[String]) -> Result<(), String> {
     let mut question = None;
     let mut depth = smithy_run::plan::Depth::Lookup;
-    let mut thinking = true;
+    let mut thinking = None;
     let mut tag = String::from("r");
     let mut project = PathBuf::from(".");
     let mut it = words.iter();
@@ -287,8 +287,8 @@ pub async fn research_once(words: &[String]) -> Result<(), String> {
             }
             "--thinking" => {
                 thinking = match value("--thinking")?.as_str() {
-                    "on" => true,
-                    "off" => false,
+                    "on" => Some(true),
+                    "off" => Some(false),
                     other => return Err(format!("--thinking is on or off, not {other}")),
                 }
             }
@@ -356,7 +356,8 @@ pub async fn research_once(words: &[String]) -> Result<(), String> {
     };
     let usage = session.usage();
     let report = serde_json::json!({
-        "question": question, "depth": depth.name(), "thinking": thinking, "note": path,
+        "question": question, "depth": depth.name(),
+        "thinking": thinking.unwrap_or(depth.thinks()), "note": path,
         "seconds": seconds, "ended": ended, "requests": usage.requests,
         "prompt_tokens": usage.prompt_tokens, "cached_tokens": usage.cached_tokens,
         "completion_tokens": usage.completion_tokens, "reasoning_tokens": usage.reasoning_tokens,
@@ -378,8 +379,9 @@ struct CliAgents {
     prepared: Prepared,
     project: Project,
     jev: Option<Arc<Jev>>,
-    /// Whether research Sessions think before they act.
-    research_thinking: bool,
+    /// Whether research Sessions think before they act; `None` lets the
+    /// depth decide ([`smithy_run::plan::Depth::thinks`]).
+    research_thinking: Option<bool>,
 }
 
 #[async_trait]
@@ -436,8 +438,8 @@ impl Agents for CliAgents {
             Purpose::Build { .. } => p.turn_seconds.min(BUILD_TURN_SECONDS),
             Purpose::Plan => p.turn_seconds,
         };
-        if research {
-            config.sampling.thinking = self.research_thinking;
+        if let Purpose::Research { depth, .. } = purpose {
+            config.sampling.thinking = self.research_thinking.unwrap_or(depth.thinks());
         }
         Ok(Session::new(
             p.provider.clone(),

@@ -51,6 +51,15 @@ impl Depth {
         }
     }
 
+    /// Whether the model thinks before each step. A lookup is many quick
+    /// fetch-and-quote actions; measured on the same question at the same
+    /// time, thinking made 6 of them in eight minutes and verified 1 finding,
+    /// not thinking made 61 and verified 6. On a decision, thinking found the
+    /// fact that settled it and not thinking did not (2026-09-25, report §9).
+    pub fn thinks(self) -> bool {
+        !matches!(self, Depth::Lookup)
+    }
+
     /// The Skill whose procedure the research Session follows.
     pub fn procedure(self) -> &'static str {
         match self {
@@ -504,6 +513,13 @@ min_tests = 4
     }
 
     /// A question says how much it deserves; a plain string is a decision.
+    #[test]
+    fn only_a_lookup_researches_without_thinking() {
+        assert!(!Depth::Lookup.thinks());
+        assert!(Depth::Decision.thinks());
+        assert!(Depth::Deep.thinks());
+    }
+
     #[test]
     fn research_items_carry_a_depth_and_default_to_decision() {
         let plan = Plan::parse(&GOOD.replace(
