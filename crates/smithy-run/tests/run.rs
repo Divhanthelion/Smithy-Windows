@@ -74,6 +74,10 @@ struct ScriptedAgents {
     provider: Arc<ScriptedProvider>,
     root: PathBuf,
     purposes: Mutex<Vec<Purpose>>,
+    /// Scripts for research Sessions, one each in the order they are made.
+    /// Sessions that run side by side cannot share one script: which of them
+    /// asks first is the scheduler's business.
+    research_scripts: Mutex<VecDeque<Vec<Completion>>>,
 }
 
 #[async_trait]
@@ -95,8 +99,16 @@ impl Agents for ScriptedAgents {
             task: None,
         }));
         let ctx = ToolCtx::new(Workspace::open(&self.root)?);
+        let own = match purpose {
+            Purpose::Research { .. } => self.research_scripts.lock().unwrap().pop_front(),
+            _ => None,
+        };
+        let provider: Arc<ScriptedProvider> = match own {
+            Some(script) => Arc::new(ScriptedProvider::new(script)),
+            None => self.provider.clone(),
+        };
         Ok(Session::new(
-            self.provider.clone(),
+            provider,
             Arc::new(registry),
             Arc::new(ctx),
             SessionConfig::new("test"),
@@ -174,6 +186,7 @@ fn harness(root: &Path, script: Vec<Completion>) -> Harness {
     let agents = Arc::new(ScriptedAgents {
         provider: Arc::new(ScriptedProvider::new(script)),
         root: root.to_path_buf(),
+        research_scripts: Mutex::new(VecDeque::new()),
         purposes: Mutex::new(Vec::new()),
     });
     let judge = Arc::new(ScriptedJudge::default());
@@ -188,6 +201,8 @@ fn harness(root: &Path, script: Vec<Completion>) -> Harness {
         supervisor: None,
         log_level: smithy_run::runlog::LogLevel::Off,
         log_dir: None,
+        slots: 1,
+        library: None,
     };
     Harness {
         agents,
@@ -650,6 +665,166 @@ async fn every_planned_question_is_researched_and_jevs_numbers_are_reported() {
         "{report}"
     );
     assert!(report.contains("| 0.05 |"), "{report}");
+}
+
+/// With two slots, the plan's questions are researched side
+/// by side before the first Task, and each Task finds its Notes on file.
+#[tokio::test]
+async fn with_two_slots_research_runs_ahead_side_by_side() {
+    let tmp = project();
+    let root = tmp.path();
+    let plan = PLAN.replace(
+        "why = \"the whole intent\"
+",
+        TWO_QUESTIONS,
+    );
+    let date = smithy_run::state::utc_date(smithy_run::state::unix_now());
+    let note1 = smithy_run::prompts::note_path(&date, Some("T1"), "Is P1W2D legal?");
+    let note2 = smithy_run::prompts::note_path(&date, Some("T1"), "Which designators exist?");
+    let mut h = harness(
+        root,
+        vec![
+            answer(&plan),
+            write("c1", "src.txt", "fn parse() {}"),
+            answer("Done."),
+        ],
+    );
+    h.agents.research_scripts.lock().unwrap().extend([
+        vec![
+            write(
+                "r1",
+                &note1,
+                "# Is P1W2D legal?
+
+**Status:** verified
+",
+            ),
+            answer("Wrote the note."),
+        ],
+        vec![
+            write(
+                "r2",
+                &note2,
+                "# Which designators exist?
+
+**Status:** verified
+",
+            ),
+            answer("Wrote the note."),
+        ],
+    ]);
+    h.deps.slots = 2;
+
+    let state = Runner::start(root, "build a parser", Ceilings::default(), h.deps.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(state.verdict, Some(Verdict::Done), "{:?}", state.verdict);
+    let purposes = h.agents.purposes.lock().unwrap().clone();
+    let build = purposes
+        .iter()
+        .position(|p| matches!(p, Purpose::Build { .. }))
+        .unwrap();
+    assert_eq!(research_sessions(&h).len(), 2);
+    assert!(
+        purposes[..build]
+            .iter()
+            .filter(|p| matches!(p, Purpose::Research { .. }))
+            .count()
+            == 2,
+        "both researched before the build: {purposes:?}"
+    );
+    assert!(state.tasks["T1"].notes.contains(&note1));
+    assert!(state.tasks["T1"].notes.contains(&note2));
+    assert_eq!(state.notes.len(), 2, "each question researched once");
+}
+
+/// A Note one Run wrote answers the same question in another Project's Run:
+/// it is kept in the library, found there, copied in, and not researched again.
+#[tokio::test]
+async fn a_note_in_the_library_answers_another_projects_question() {
+    let library = tempfile::tempdir().unwrap();
+    let plan = PLAN.replace(
+        "why = \"the whole intent\"
+",
+        TWO_QUESTIONS,
+    );
+    let date = smithy_run::state::utc_date(smithy_run::state::unix_now());
+    let note1 = smithy_run::prompts::note_path(&date, Some("T1"), "Is P1W2D legal?");
+    let note2 = smithy_run::prompts::note_path(&date, Some("T1"), "Which designators exist?");
+    let researched = |root: &Path| {
+        let mut h = harness(
+            root,
+            vec![
+                answer(&plan),
+                write(
+                    "r1",
+                    &note1,
+                    "# Is P1W2D legal?
+
+**Status:** verified
+",
+                ),
+                answer("Wrote the note."),
+                write(
+                    "r2",
+                    &note2,
+                    "# Which designators exist?
+
+**Status:** verified
+",
+                ),
+                answer("Wrote the note."),
+                write("c1", "src.txt", "fn parse() {}"),
+                answer("Done."),
+            ],
+        );
+        h.deps.library = Some(library.path().to_path_buf());
+        h
+    };
+
+    let first = project();
+    let h1 = researched(first.path());
+    Runner::start(
+        first.path(),
+        "build a parser",
+        Ceilings::default(),
+        h1.deps.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(research_sessions(&h1).len(), 2);
+    assert!(library.path().join(&note1).is_file(), "kept in the library");
+
+    let second = project();
+    let mut h2 = harness(
+        second.path(),
+        vec![
+            answer(&plan),
+            write("c1", "src.txt", "fn parse() {}"),
+            answer("Done."),
+        ],
+    );
+    h2.deps.library = Some(library.path().to_path_buf());
+    let state = Runner::start(
+        second.path(),
+        "build a parser",
+        Ceilings::default(),
+        h2.deps.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(state.verdict, Some(Verdict::Done), "{:?}", state.verdict);
+    assert!(
+        research_sessions(&h2).is_empty(),
+        "nothing researched again"
+    );
+    assert!(state.notes.iter().all(|n| n.reused));
+    assert!(
+        second.path().join(&note1).is_file(),
+        "copied into the Project"
+    );
 }
 
 /// The Run's research budget holds whoever asks: past it, a Task is built

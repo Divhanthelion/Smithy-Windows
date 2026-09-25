@@ -6461,6 +6461,7 @@ name = "smithy-run"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures-util",
  "regex",
  "serde",
  "serde_json",

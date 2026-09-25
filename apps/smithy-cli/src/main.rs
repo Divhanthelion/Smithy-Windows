@@ -19,6 +19,9 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("research") {
+        return run::research_once(&raw[1..]).await;
+    }
     if let Some(first @ ("run" | "runs")) = raw.first().map(String::as_str) {
         if raw.iter().any(|a| a == "-h" || a == "--help") {
             print!("{}", run::usage());

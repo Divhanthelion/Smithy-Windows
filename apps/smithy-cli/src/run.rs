@@ -23,11 +23,14 @@ use smithy_tools::{ToolCtx, Workspace};
 
 use crate::boot::{assemble_registry, prepare, Prepared};
 
-/// How much of a Run to keep for review, and where.
+/// Per-invocation settings: what of a Run to keep for review and where, and
+/// how many requests the model server takes at once.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Logging {
     pub level: LogLevel,
     pub dir: Option<PathBuf>,
+    /// Requests the model server takes at once (`--slots`, `SMITHY_RUN_SLOTS`).
+    pub slots: usize,
 }
 
 impl Logging {
@@ -39,7 +42,14 @@ impl Logging {
             _ => LogLevel::default(),
         };
         let dir = std::env::var_os("SMITHY_RUN_LOG_DIR").map(PathBuf::from);
-        Ok(Logging { level, dir })
+        let slots = match std::env::var("SMITHY_RUN_SLOTS") {
+            Ok(v) if !v.trim().is_empty() => v
+                .trim()
+                .parse()
+                .map_err(|_| "SMITHY_RUN_SLOTS takes a whole number".to_string())?,
+            _ => 1,
+        };
+        Ok(Logging { level, dir, slots })
     }
 }
 
@@ -74,6 +84,8 @@ smithy-agent runs [--project PATH]             every Run in this Project
                          full = that plus every conversation in full
 --log-dir DIR            where (default ~/.local/share/smithy/runs/PROJECT/RUN;
                          SMITHY_RUN_LOG_DIR)
+--slots N                requests the model server takes at once (default 1;
+                         SMITHY_RUN_SLOTS); above 1, research runs side by side
 
 A Run works on its own branch (smithy/run-ID), commits each Task when its
 checks pass, never pushes, and leaves .smithy/runs/ID/REPORT.md.
@@ -124,6 +136,11 @@ pub fn parse(list: bool, words: &[String]) -> Result<(RunCommand, PathBuf), Stri
             }
             "--log" => logging.level = LogLevel::parse(&value("--log")?)?,
             "--log-dir" => logging.dir = Some(PathBuf::from(value("--log-dir")?)),
+            "--slots" => {
+                logging.slots = value("--slots")?
+                    .parse()
+                    .map_err(|_| "--slots takes a whole number".to_string())?
+            }
             "--resume" => resume = true,
             "--allow" => allow.push(value("--allow")?),
             flag if flag.starts_with("--") => {
@@ -200,6 +217,7 @@ pub async fn run(cmd: RunCommand, project: &Path) -> Result<(), String> {
             prepared,
             project: project.clone(),
             jev: quick_jev.clone(),
+            research_thinking: true,
         }),
         judge,
         notifier: Arc::new(DesktopNotifier),
@@ -209,6 +227,8 @@ pub async fn run(cmd: RunCommand, project: &Path) -> Result<(), String> {
         log_level: logging.level,
         log_dir: logging.dir.clone(),
         supervisor: quick_jev,
+        slots: logging.slots,
+        library: smithy_tools::research::library_location(),
     };
 
     let state = match cmd {
@@ -238,6 +258,118 @@ fn summarize(root: &Path, state: &RunState) {
     );
 }
 
+/// `smithy-agent research "QUESTION" [--depth D] [--thinking on|off] [--tag T]`:
+/// one research question, set up exactly as a Run sets it up, measured.
+///
+/// For comparing how research is done — thinking on or off, say — on the
+/// same question: it prints the minutes, requests and tokens it took, how
+/// many findings verify, whether the Note is done by the skill's definition,
+/// and Jev's "does it answer the question?". Writes only the Note.
+pub async fn research_once(words: &[String]) -> Result<(), String> {
+    let mut question = None;
+    let mut depth = smithy_run::plan::Depth::Lookup;
+    let mut thinking = true;
+    let mut tag = String::from("r");
+    let mut project = PathBuf::from(".");
+    let mut it = words.iter();
+    while let Some(w) = it.next() {
+        let mut value = |name: &str| it.next().cloned().ok_or(format!("{name} needs a value"));
+        match w.as_str() {
+            "--depth" => {
+                depth = match value("--depth")?.as_str() {
+                    "lookup" => smithy_run::plan::Depth::Lookup,
+                    "decision" => smithy_run::plan::Depth::Decision,
+                    "deep" => smithy_run::plan::Depth::Deep,
+                    other => {
+                        return Err(format!("--depth is lookup, decision or deep, not {other}"))
+                    }
+                }
+            }
+            "--thinking" => {
+                thinking = match value("--thinking")?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    other => return Err(format!("--thinking is on or off, not {other}")),
+                }
+            }
+            "--tag" => tag = value("--tag")?,
+            "--project" | "-C" => project = PathBuf::from(value("--project")?),
+            flag if flag.starts_with("--") => return Err(format!("unknown flag {flag}")),
+            text if question.is_none() => question = Some(text.to_string()),
+            text => return Err(format!("unexpected `{text}`")),
+        }
+    }
+    let question = question.ok_or("what is the question?")?;
+    let project = Project::discover(&project)
+        .or_else(|_| Project::open(&project))
+        .map_err(|e| e.to_string())?;
+    let root = project.root.clone();
+    let prepared = prepare(&project).await?;
+    let jev = Jev::from_store();
+    let agents = CliAgents {
+        prepared,
+        project: project.clone(),
+        jev: jev.map(Arc::new),
+        research_thinking: thinking,
+    };
+    let purpose = Purpose::Research { task: None, depth };
+    let mut session = agents.session(&purpose, DeniedLog::default()).await?;
+    let date = smithy_run::state::utc_date(smithy_run::state::unix_now());
+    let path = smithy_run::prompts::note_path(&date, Some(&tag), &question);
+    let sources = SourceStore::default_location();
+    session.observe(Arc::new(smithy_run::observers::WriteTheNote::new(
+        root.join(&path),
+        depth.draft_by_step(),
+    )));
+    session.observe(Arc::new(smithy_run::observers::NoteIsDone::new(
+        root.join(&path),
+        root.clone(),
+        sources.clone(),
+    )));
+    let procedure = smithy_agent::load_skill(&root, depth.procedure())
+        .or_else(|| smithy_agent::load_skill(&root, "research"))
+        .map(|s| s.injection())
+        .unwrap_or_default();
+    let prompt = smithy_run::prompts::research_prompt(&procedure, &question, None, &path);
+
+    let started = std::time::Instant::now();
+    let outcome = session.run_turn(&prompt, None).await;
+    let seconds = started.elapsed().as_secs();
+    let ended = match &outcome {
+        Ok(smithy_agent::Outcome::Answer(_)) => "answered".to_string(),
+        Ok(smithy_agent::Outcome::Stopped(why)) => why.clone(),
+        Err(e) => format!("error: {e}"),
+    };
+    let text = std::fs::read_to_string(root.join(&path)).unwrap_or_default();
+    let check = sources
+        .as_ref()
+        .map(|s| smithy_tools::research::check_note(&text, s, &root));
+    let done =
+        smithy_run::observers::NoteIsDone::new(root.join(&path), root.clone(), sources).done(&text);
+    let answered = match Jev::from_store() {
+        Some(j) if !text.is_empty() => j
+            .patient()
+            .answered(&smithy_agent::jev::answered_state(&question, &text))
+            .await
+            .ok(),
+        _ => None,
+    };
+    let usage = session.usage();
+    let report = serde_json::json!({
+        "question": question, "depth": depth.name(), "thinking": thinking, "note": path,
+        "seconds": seconds, "ended": ended, "requests": usage.requests,
+        "prompt_tokens": usage.prompt_tokens, "cached_tokens": usage.cached_tokens,
+        "completion_tokens": usage.completion_tokens, "reasoning_tokens": usage.reasoning_tokens,
+        "note_written": !text.is_empty(), "done": done,
+        "findings": check.as_ref().map(|c| c.findings.len()),
+        "verified": check.as_ref().map(|c| c.verified()),
+        "cite_check_passes": check.as_ref().map(|c| c.passes()),
+        "answered": answered,
+    });
+    println!("{report}");
+    Ok(())
+}
+
 /// Sessions built like the REPL's, with the unattended hooks instead of the
 /// interactive ones and no MCP (its tools' review hook would have nobody to
 /// ask). The Map and the Index are rebuilt for each Session, because the
@@ -246,6 +378,8 @@ struct CliAgents {
     prepared: Prepared,
     project: Project,
     jev: Option<Arc<Jev>>,
+    /// Whether research Sessions think before they act.
+    research_thinking: bool,
 }
 
 #[async_trait]
@@ -302,6 +436,9 @@ impl Agents for CliAgents {
             Purpose::Build { .. } => p.turn_seconds.min(BUILD_TURN_SECONDS),
             Purpose::Plan => p.turn_seconds,
         };
+        if research {
+            config.sampling.thinking = self.research_thinking;
+        }
         Ok(Session::new(
             p.provider.clone(),
             Arc::new(registry),

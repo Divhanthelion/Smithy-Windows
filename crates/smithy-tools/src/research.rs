@@ -574,6 +574,20 @@ pub fn note_meta(path: &str, text: &str) -> NoteMeta {
 }
 
 /// Every Note in the Project, newest name first.
+/// Where Notes are kept for every Project, so one Run's research can answer
+/// another's. Laid out like a Project (`<library>/.smithy/research/*.md`) so
+/// [`list_notes`] and [`find_notes`] read it unchanged; its quotes check
+/// against the same [`SourceStore`]. `SMITHY_NOTES_LIBRARY` moves it.
+pub fn library_location() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("SMITHY_NOTES_LIBRARY") {
+        return Some(PathBuf::from(dir));
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)?;
+    Some(home.join(".local/share/smithy/library"))
+}
+
 pub fn list_notes(root: &Path) -> Vec<NoteMeta> {
     let dir = root.join(NOTES_DIR);
     let Ok(entries) = std::fs::read_dir(&dir) else {

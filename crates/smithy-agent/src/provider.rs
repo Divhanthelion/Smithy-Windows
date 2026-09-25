@@ -55,6 +55,15 @@ pub struct Sampling {
     pub repetition_penalty: f64,
     pub presence_penalty: f64,
     pub max_tokens: i64,
+    /// Whether a reasoning model thinks before it answers. Off asks the
+    /// server not to (Qwen's `enable_thinking`); providers that cannot turn
+    /// it off ignore it.
+    #[serde(default = "thinking_on")]
+    pub thinking: bool,
+}
+
+fn thinking_on() -> bool {
+    true
 }
 
 impl Default for Sampling {
@@ -67,6 +76,7 @@ impl Default for Sampling {
             repetition_penalty: 1.0,
             presence_penalty: 0.0,
             max_tokens: 16384,
+            thinking: true,
         }
     }
 }

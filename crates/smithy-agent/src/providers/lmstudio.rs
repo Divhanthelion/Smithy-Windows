@@ -192,6 +192,9 @@ impl LmStudio {
         // Without this the final chunk carries no usage block, and the context
         // budget has nothing to track.
         body["stream_options"] = json!({ "include_usage": true });
+        if !s.thinking {
+            body["chat_template_kwargs"] = json!({ "enable_thinking": false });
+        }
         if self.omit_min_p.load(Ordering::Relaxed) {
             if let Some(fields) = body.as_object_mut() {
                 fields.remove("min_p");
@@ -517,6 +520,31 @@ mod step_budget_tests {
             deepseek, 300,
             "the 1M backstop is the ceiling, not the 32k budget"
         );
+    }
+
+    /// No reply cap goes to a local server, and thinking is only mentioned
+    /// when it is turned off.
+    #[test]
+    fn the_body_sends_no_cap_and_asks_for_no_thinking_only_when_off() {
+        let provider = LmStudio::new("http://localhost:1234/v1", "m").unwrap();
+        let history = crate::message::History::new("sys");
+        let tools = Value::Array(Vec::new());
+        let body = |sampling: &Sampling| {
+            provider.build_body(&CompletionRequest {
+                history: &history,
+                tools: &tools,
+                sampling,
+                timeout: None,
+            })
+        };
+        let on = body(&Sampling::default());
+        assert!(on.get("max_tokens").is_none(), "{on}");
+        assert!(on.get("chat_template_kwargs").is_none(), "{on}");
+        let off = body(&Sampling {
+            thinking: false,
+            ..Sampling::default()
+        });
+        assert_eq!(off["chat_template_kwargs"]["enable_thinking"], false);
     }
 
     #[test]

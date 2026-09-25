@@ -137,6 +137,15 @@ pub struct Deps {
     /// default place outside the Project; see [`crate::runlog`].
     pub log_level: LogLevel,
     pub log_dir: Option<PathBuf>,
+    /// How many requests the model server takes at once. Above one, the
+    /// plan's research questions run side by side before the first Task:
+    /// they do not depend on each other, and a server decoding several
+    /// conversations reads its weights once per step for all of them.
+    pub slots: usize,
+    /// Notes shared between Projects (see [`research::library_location`]):
+    /// every Note a Run writes is kept there, and a question one of them
+    /// answers is not researched again. `None` keeps research to the Project.
+    pub library: Option<PathBuf>,
 }
 
 pub struct Runner {
@@ -152,12 +161,26 @@ pub struct Runner {
     /// Consecutive model-endpoint failures; two ends the Run.
     provider_failures: usize,
     runlog: Arc<RunLog>,
+    /// Tasks whose Guardrail has already passed in this process, so
+    /// researching ahead does not ask twice.
+    guarded: std::collections::BTreeSet<String>,
 }
 
 /// How a round of work ended.
 enum RoundEnd {
     Passed,
     Failed(Vec<CheckOutcome>, String),
+}
+
+/// A research question with its Session ready to run.
+struct ResearchJob {
+    question: String,
+    need: Option<f64>,
+    task: Option<String>,
+    /// Where the Note goes, relative to the Project.
+    path: String,
+    prompt: String,
+    worker: Worker,
 }
 
 /// A Session and how much of its usage the Run has already counted.
@@ -222,6 +245,7 @@ impl Runner {
             started: Instant::now(),
             elapsed_before: 0,
             provider_failures: 0,
+            guarded: Default::default(),
             runlog: Arc::new(RunLog::off()),
         };
         runner.open_log();
@@ -304,6 +328,7 @@ impl Runner {
             started: Instant::now(),
             elapsed_before,
             provider_failures: 0,
+            guarded: Default::default(),
             runlog: Arc::new(RunLog::off()),
         };
         runner.open_log();
@@ -343,6 +368,9 @@ impl Runner {
             }
         }
         let plan = self.plan.clone().expect("planned");
+        if let Err(v) = self.research_ahead(&plan).await {
+            return v;
+        }
 
         for task in &plan.tasks {
             let status = self.state.task(&task.id).status.clone();
@@ -365,12 +393,8 @@ impl Runner {
                 self.save();
                 continue;
             }
-            if !self.state.allowed.contains(&task.id) {
-                let state = jev::guardrail_state(&plan.intent, Some((&task.title, &task.why)));
-                if let Some(v) = self.guardrail(&task.id, &state, Some(&task.id)).await {
-                    self.state.task(&task.id).status = TaskStatus::Flagged;
-                    return v;
-                }
+            if let Some(v) = self.guard_task(&plan, task).await {
+                return v;
             }
             match self.work_task(&plan, task).await {
                 Ok(()) => {}
@@ -1148,6 +1172,106 @@ impl Runner {
         p
     }
 
+    /// The Guardrail on one Task, once per process; `Some` stops the Run.
+    async fn guard_task(&mut self, plan: &Plan, task: &Task) -> Option<Verdict> {
+        if self.state.allowed.contains(&task.id) || self.guarded.contains(&task.id) {
+            return None;
+        }
+        let state = jev::guardrail_state(&plan.intent, Some((&task.title, &task.why)));
+        if let Some(v) = self.guardrail(&task.id, &state, Some(&task.id)).await {
+            self.state.task(&task.id).status = TaskStatus::Flagged;
+            return Some(v);
+        }
+        self.guarded.insert(task.id.clone());
+        None
+    }
+
+    /// With more than one slot, research every question the plan asks, side
+    /// by side, before the first Task. Each Task then finds its Notes on file.
+    /// Every question still passes its Task's Guardrail, has its need
+    /// reported, and reuses a Note that answers it; only the fresh ones run,
+    /// `slots` at a time.
+    async fn research_ahead(&mut self, plan: &Plan) -> Result<(), Verdict> {
+        let slots = self.deps.slots;
+        if slots < 2 {
+            return Ok(());
+        }
+        let mut fresh: Vec<(Task, String, Depth, Option<f64>)> = Vec::new();
+        for task in &plan.tasks {
+            let status = self.state.task(&task.id).status.clone();
+            if task.research.is_empty() || matches!(status, TaskStatus::Done | TaskStatus::Blocked)
+            {
+                continue;
+            }
+            if let Some(v) = self.guard_task(plan, task).await {
+                return Err(v);
+            }
+            let checks = task.render_checks();
+            for item in &task.research {
+                let q = item.question().to_string();
+                if self.already_researched(&task.id, &q).is_some() {
+                    continue;
+                }
+                let why = format!(
+                    "{}
+The question: {q}",
+                    task.why
+                );
+                let st = jev::research_state(&plan.intent, &task.title, &why, &checks);
+                let need = self.research_need(&task.id, &st, true).await;
+                if self
+                    .reuse_note(&q, need, Some(task.id.clone()))
+                    .await
+                    .is_some()
+                {
+                    continue;
+                }
+                fresh.push((task.clone(), q, item.depth(), need));
+            }
+        }
+        if fresh.is_empty() {
+            return Ok(());
+        }
+        self.say(&format!(
+            "researching {} question(s), {} at a time",
+            fresh.len(),
+            slots.min(fresh.len())
+        ));
+        for batch in fresh.chunks(slots) {
+            if self.research_spent(&batch[0].1, Some(&batch[0].0.id)) {
+                break;
+            }
+            let started = Instant::now();
+            let mut jobs = Vec::with_capacity(batch.len());
+            for (task, q, depth, need) in batch {
+                jobs.push(self.prepare_research(q, *depth, *need, Some(task)).await?);
+            }
+            let sinks: Vec<_> = jobs
+                .iter()
+                .map(|j| self.runlog.sink(&j.worker.label))
+                .collect();
+            let results =
+                futures_util::future::join_all(jobs.iter_mut().zip(&sinks).map(|(job, sink)| {
+                    let ResearchJob { worker, prompt, .. } = job;
+                    worker.session.run_turn(prompt, Some(sink))
+                }))
+                .await;
+            self.state.research_seconds += started.elapsed().as_secs();
+            for (mut job, result) in jobs.into_iter().zip(results) {
+                self.after_turn(&mut job.worker, result)?;
+                let task = job.task.clone();
+                if let (Some(path), Some(task)) = (self.finish_research(job).await?, task) {
+                    let t = self.state.task(&task);
+                    if !t.notes.contains(&path) {
+                        t.notes.push(path);
+                    }
+                }
+            }
+            self.save();
+        }
+        Ok(())
+    }
+
     /// The Note this Run already wrote for `question` on `task`, if it is
     /// still on disk.
     fn already_researched(&self, task: &str, question: &str) -> Option<String> {
@@ -1171,66 +1295,10 @@ impl Runner {
         task: Option<&Task>,
     ) -> Result<Option<String>, Verdict> {
         let task_id = task.map(|t| t.id.clone());
-        // Something already on file may answer it.
-        if let Some((overlap, meta)) = research::find_notes(&self.root, question, 1)
-            .into_iter()
-            .next()
-        {
-            if overlap >= 0.6 && meta.status.contains("verified") {
-                if let Ok(text) = std::fs::read_to_string(self.root.join(&meta.path)) {
-                    let st = jev::answered_state(question, &text);
-                    let answer = self.deps.judge.answered(&st).await;
-                    let reuse = matches!(answer, Ok(p) if p >= jev::ANSWERED_THRESHOLD);
-                    self.record(Draft {
-                        task: task_id.as_deref(),
-                        attempt: None,
-                        kind: "answered",
-                        state: &st,
-                        answer: answer
-                            .clone()
-                            .map(Answer::Probability)
-                            .unwrap_or_else(Answer::Unavailable),
-                        threshold: Some(jev::ANSWERED_THRESHOLD),
-                        action: if reuse {
-                            "reuse the note on file"
-                        } else {
-                            "research anew"
-                        },
-                    });
-                    if reuse {
-                        self.say(&format!("research: reusing {}", meta.path));
-                        let check = self.check_note(&text);
-                        self.state.notes.push(NoteRecord {
-                            path: meta.path.clone(),
-                            question: question.to_string(),
-                            task: task_id.clone(),
-                            verified: check.as_ref().map(|c| c.verified()).unwrap_or(0),
-                            findings: check.as_ref().map(|c| c.findings.len()).unwrap_or(0),
-                            answered: answer.ok(),
-                            reused: true,
-                            need,
-                        });
-                        return Ok(Some(meta.path));
-                    }
-                }
-            }
+        if let Some(path) = self.reuse_note(question, need, task_id.clone()).await {
+            return Ok(Some(path));
         }
-
-        let budget = self.state.ceilings.research_budget();
-        if self.state.research_seconds >= budget {
-            self.say(&format!(
-                "research skipped: the Run's {} minutes of research are spent",
-                budget / 60
-            ));
-            self.record(Draft {
-                task: task_id.as_deref(),
-                attempt: None,
-                kind: "research",
-                state: question,
-                answer: Answer::Rule("research budget spent".into()),
-                threshold: None,
-                action: "build without it",
-            });
+        if self.research_spent(question, task_id.as_deref()) {
             return Ok(None);
         }
         let started = Instant::now();
@@ -1240,6 +1308,113 @@ impl Runner {
         out
     }
 
+    /// A Note already on file — in the Project, then in the library — that
+    /// answers `question`, recorded as this Run's; `None` to research it. A
+    /// library Note is copied into the Project first, so the build reads it
+    /// where every other Note is.
+    async fn reuse_note(
+        &mut self,
+        question: &str,
+        need: Option<f64>,
+        task_id: Option<String>,
+    ) -> Option<String> {
+        let mut places = vec![self.root.clone()];
+        places.extend(self.deps.library.clone());
+        for place in places {
+            if let Some(path) = self
+                .reuse_from(&place, question, need, task_id.clone())
+                .await
+            {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    async fn reuse_from(
+        &mut self,
+        place: &Path,
+        question: &str,
+        need: Option<f64>,
+        task_id: Option<String>,
+    ) -> Option<String> {
+        let (overlap, meta) = research::find_notes(place, question, 1)
+            .into_iter()
+            .next()?;
+        if overlap < 0.6 || !meta.status.contains("verified") {
+            return None;
+        }
+        let text = std::fs::read_to_string(place.join(&meta.path)).ok()?;
+        let st = jev::answered_state(question, &text);
+        let answer = self.deps.judge.answered(&st).await;
+        let reuse = matches!(answer, Ok(p) if p >= jev::ANSWERED_THRESHOLD);
+        self.record(Draft {
+            task: task_id.as_deref(),
+            attempt: None,
+            kind: "answered",
+            state: &st,
+            answer: answer
+                .clone()
+                .map(Answer::Probability)
+                .unwrap_or_else(Answer::Unavailable),
+            threshold: Some(jev::ANSWERED_THRESHOLD),
+            action: if reuse {
+                "reuse the note on file"
+            } else {
+                "research anew"
+            },
+        });
+        if !reuse {
+            return None;
+        }
+        if place != self.root {
+            let into = self.root.join(&meta.path);
+            if !into.is_file() {
+                if let Some(dir) = into.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                std::fs::write(&into, &text).ok()?;
+            }
+            self.say(&format!("research: reusing {} from the library", meta.path));
+        } else {
+            self.say(&format!("research: reusing {}", meta.path));
+        }
+        let check = self.check_note(&text);
+        self.state.notes.push(NoteRecord {
+            path: meta.path.clone(),
+            question: question.to_string(),
+            task: task_id,
+            verified: check.as_ref().map(|c| c.verified()).unwrap_or(0),
+            findings: check.as_ref().map(|c| c.findings.len()).unwrap_or(0),
+            answered: answer.ok(),
+            reused: true,
+            need,
+        });
+        Some(meta.path)
+    }
+
+    /// Whether the Run's research time is used up; if so, say so and log it.
+    fn research_spent(&mut self, question: &str, task_id: Option<&str>) -> bool {
+        let budget = self.state.ceilings.research_budget();
+        if self.state.research_seconds < budget {
+            return false;
+        }
+        self.say(&format!(
+            "research skipped: the Run's {} minutes of research are spent",
+            budget / 60
+        ));
+        self.record(Draft {
+            task: task_id,
+            attempt: None,
+            kind: "research",
+            state: question,
+            answer: Answer::Rule("research budget spent".into()),
+            threshold: None,
+            action: "build without it",
+        });
+        true
+    }
+
     async fn run_research(
         &mut self,
         question: &str,
@@ -1247,6 +1422,20 @@ impl Runner {
         need: Option<f64>,
         task: Option<&Task>,
     ) -> Result<Option<String>, Verdict> {
+        let mut job = self.prepare_research(question, depth, need, task).await?;
+        let prompt = job.prompt.clone();
+        self.turn(&mut job.worker, &prompt).await?;
+        self.finish_research(job).await
+    }
+
+    /// A research Session made ready: its observers set, its prompt written.
+    async fn prepare_research(
+        &mut self,
+        question: &str,
+        depth: Depth,
+        need: Option<f64>,
+        task: Option<&Task>,
+    ) -> Result<ResearchJob, Verdict> {
         let task_id = task.map(|t| t.id.clone());
         self.say(&format!("research ({}): {question}", depth.name()));
         let path = prompts::note_path(&utc_date(unix_now()), task_id.as_deref(), question);
@@ -1268,14 +1457,41 @@ impl Runner {
                 self.root.join(&path),
                 depth.draft_by_step(),
             )));
+        session
+            .session
+            .observe(Arc::new(crate::observers::NoteIsDone::new(
+                self.root.join(&path),
+                self.root.clone(),
+                self.deps.sources.clone(),
+            )));
         let prompt = prompts::research_prompt(
             &procedure,
             question,
             task.map(|t| (t.id.as_str(), t.title.as_str())),
             &path,
         );
-        self.turn(&mut session, &prompt).await?;
+        Ok(ResearchJob {
+            question: question.to_string(),
+            need,
+            task: task_id,
+            path,
+            prompt,
+            worker: session,
+        })
+    }
 
+    /// After a research turn: make sure there is a Note, mark what failed
+    /// verification, have Jev report whether it answers, and record it.
+    async fn finish_research(&mut self, job: ResearchJob) -> Result<Option<String>, Verdict> {
+        let ResearchJob {
+            question,
+            need,
+            task: task_id,
+            path,
+            worker: mut session,
+            ..
+        } = job;
+        let question = question.as_str();
         let mut answered = None;
         for pass in 0..2 {
             let Ok(text) = std::fs::read_to_string(self.root.join(&path)) else {
@@ -1331,6 +1547,13 @@ impl Runner {
             need,
         });
         self.save();
+        if let Some(library) = &self.deps.library {
+            let into = library.join(&path);
+            if let Some(dir) = into.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(into, &text);
+        }
         Ok(Some(path))
     }
 
@@ -1452,6 +1675,18 @@ impl Runner {
     ) -> Result<Option<String>, Verdict> {
         let sink = self.runlog.sink(&session.label);
         let result = session.session.run_turn(message, Some(&sink)).await;
+        self.after_turn(session, result)
+    }
+
+    /// What a turn's end means to the Run: its conversation saved, its
+    /// tokens billed, its refusals recorded, and whether the endpoint is
+    /// still answering. Separate from [`Self::turn`] so turns that ran at
+    /// the same time can be settled one after another.
+    fn after_turn(
+        &mut self,
+        session: &mut Worker,
+        result: Result<Outcome, smithy_agent::ProviderError>,
+    ) -> Result<Option<String>, Verdict> {
         self.runlog
             .save_session(&session.label, &session.session, &self.root);
         self.bill(session);
