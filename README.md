@@ -3,8 +3,16 @@
 **A native Rust IDE with a coding agent that runs on your own machine.**
 
 Open a project, edit files, and ask an agent to do the work — against a model
-you host yourself. Nothing is uploaded, no API key is needed, and it keeps
-working with the network off.
+you host yourself. The model needs no API key and no network.
+
+**This fork of [Smithy](https://github.com/Divhanthelion/Smithy-v1) is defined by [Jev](#jev-a-second-model-that-checks-the-first):**
+TypeSafe's fast decision model, wired into the agent loop as its reflexes. The
+agent writes the code; Jev answers the yes-or-no questions a careful developer
+would ask while watching — *is this command dangerous? is it going in circles?
+is it actually done? would building this hurt someone? did it just loosen a
+test to make it pass?* — in well under a second, with a probability instead of
+an opinion. That is what makes [unattended Runs](#unattended-runs) possible:
+one intent in, a branch of checked commits out, while nobody is watching.
 
 The agent can read your code, search it, run commands and write files. Every
 write comes back as a diff you approve hunk by hunk, and every shell command
@@ -47,6 +55,14 @@ With YOLO on, in-Project writes skip Review and commands that stay down in the P
 `cd ..` and paths outside the Project still ask. Environment names matching `*_API_KEY`, `*_TOKEN`, and `*_SECRET` are scrubbed
 from the child; `cd ..` out of the project remains possible.
 
+**A second model checks the first.** A coding model is a poor judge of its own
+work: it loops without noticing, calls a half-finished job done, and will edit a
+failing test until it passes. Smithy asks [Jev](#jev-a-second-model-that-checks-the-first),
+a separate model built to return calibrated decisions, at the moments those
+mistakes happen. Jev can add caution — a prompt, a nudge, a stop — but it never
+approves anything on its own, and without it Smithy behaves exactly as it did
+before Jev existed.
+
 **The call graph is resolved by the compiler.** Edges come from rust-analyzer
 via SCIP, not from matching names. Name matching was tried first and measured:
 it was right 55% of the time on this workspace, and it failed hardest on
@@ -84,14 +100,99 @@ one whose claims you can verify, that is the whole idea.
 
 ---
 
+## Jev: a second model that checks the first
+
+### What Jev is
+
+Jev (`typesafe-ai/jev`) is TypeSafe's "System One" model: it does not write
+text. You give it a short description of a situation
+and a precise question, and it gives back a probability — or, for a choice,
+the pick and how sure it is. It answers in a fraction of a second, which is
+fast enough to sit inside every step of an agent loop without slowing it down.
+Smithy reaches it through the Vercel AI Gateway.
+
+The coding model and Jev do different jobs. The coding model (yours, local or
+hosted) decides *what to do*; Jev answers *whether what just happened is
+right* — the reflex a person supervising an agent would bring, asked of a model
+whose only job is to answer that kind of question well.
+
+### Where Smithy asks it
+
+In every agent Session, in the editor and the terminal:
+
+| Moment | Question | What a yes does |
+|---|---|---|
+| YOLO is about to run a shell command without asking | Would a careful developer want to confirm this first? (deleting in bulk, `reset --hard`, `push --force`, sending secrets over the network, installing software…) | The silent run becomes an approval prompt |
+| After each step, from the fourth | Is the agent stuck — repeating actions, re-reading what it has, retrying a failing approach unchanged? | A nudge to change approach; a second yes ends the turn |
+| Before a turn ends with an answer | Has the agent finished what was asked, or stopped partway? | The answer is sent back once to finish the job |
+
+In [unattended Runs](#unattended-runs), where nobody is there to catch mistakes:
+
+| Decision | Question | What it does |
+|---|---|---|
+| Guardrail | Would building this intent — then each Task — be illegal or clearly harmful to others? | Stops the Run and wakes you; no answer at all also stops it |
+| Cheat check | Were existing tests changed to make them pass, rather than because the Task needed it? | Reverts the Attempt and blocks the Task |
+| Next move | After a failed round: keep going, research, hand off to a fresh Session, escalate to you, or block the Task? | Picks the next step; below 30% confidence the runner's default applies |
+| Research | Does this Task hinge on outside facts a model is unlikely to know? Does a research Note actually answer its question? | Reported in the morning report; decides whether an old Note is reused |
+
+Each question is written out once, with concrete examples of yes and no, in [`crates/smithy-agent/src/jev.rs`](crates/smithy-agent/src/jev.rs).
+
+### How it is kept honest
+
+- **It can only add caution.** For the shell check, Jev never approves
+  anything: the command it judges was written by a model that reads your
+  repository, so an answer that could *skip* a prompt would make the prompt
+  negotiable. The worst a wrong answer costs is one extra click.
+- **The checks outrank it.** In a Run the order of authority is: the compiler
+  and the tests, then mechanical rules, then Jev, then the model. A Task is
+  done when its checks pass, never because Jev (or the model) says so.
+- **The thresholds are measured, not guessed.**
+  `cargo run -p smithy-agent --example jev <suite>` scores labelled cases for
+  every question and reports the misses. On the 63-case suite, 62 land on the
+  correct side and the 63rd was a rate-limit error, not a wrong answer. The
+  measured ranges sit beside each threshold in the code; the guardrail's
+  must-stop side is not yet calibrated, and the
+  [field report](reports/2026-09-24-unattended-runs-on-the-thor.md) says so.
+- **Every decision is logged with what Jev was shown.** A Run's
+  `decisions.jsonl` records the exact state, the answer, the threshold and the
+  action, and the morning report counts which decisions were later shown right
+  or wrong, so thresholds can be re-checked against real Runs.
+- **Absent means off, not broken.** No key, no network or a slow gateway (5
+  seconds) and each check falls back to what Smithy did before Jev — except
+  the Run guardrail, which fails closed: a Run with no Jev builds nothing.
+
+### What it sends
+
+Besides web search and whichever hosted model you choose (if any), Jev is the
+only service Smithy sends anything to. It gets the question and a short state,
+each piece cut to length: a shell command
+with the project's path; the request (up to 1,500 characters), the last few
+tool calls with their arguments and a line or two of each result (about 200
+characters apiece), and the final answer (up to 2,000); in a Run, the intent,
+a Task's title and checks, check-result excerpts, the diff of pre-existing
+tests a Task changed, and research Notes. Never the whole conversation or a
+whole source file; the longest pieces are those test diffs (up to 6,000
+characters) and Notes (up to 7,000).
+
+### Turning it on
+
+Put a Vercel AI Gateway key in the OS credential store (service `smithy`,
+account `ai-gateway-api-key`) or in `AI_GATEWAY_API_KEY`. That's all; the
+checks switch on for every Session. `JEV_ENDPOINT`, `JEV_MODEL` and
+`JEV_API_KEY` point the same questions at another server with the same API
+instead. An open model tried that way (Von 1.2) put 32 of the 63 cases on the
+wrong side, so it is not a drop-in replacement.
+
+---
+
 ## Getting started
 
 You need [Rust](https://rustup.rs) and, for the agent,
 [LM Studio](https://lmstudio.ai) with a tool-capable model loaded.
 
 ```bash
-git clone https://github.com/Divhanthelion/Smithy-v1.git
-cd Smithy-v1
+git clone https://github.com/Divhanthelion/Smithy-Windows.git
+cd Smithy-Windows
 cargo run -p smithy -- ~/code/your-project
 ```
 
@@ -546,6 +647,8 @@ rest have no UI and are read every time.
 | `LMSTUDIO_URL` ✱ | `http://localhost:1234/v1` | LM Studio endpoint |
 | `LMSTUDIO_MODEL` ✱ | `qwen3.6-27b` | LM Studio model name to ask for |
 | `BRAVE_API_KEY` | *(none)* | Brave Search key, if it isn't in the credential store. Absent means no `web_search` tool |
+| `AI_GATEWAY_API_KEY` | *(none)* | Vercel AI Gateway key for [Jev](#jev-a-second-model-that-checks-the-first), if it isn't in the credential store. Absent means no Jev checks, and Runs build nothing |
+| `JEV_ENDPOINT` / `JEV_MODEL` / `JEV_API_KEY` | TypeSafe's gateway / `typesafe-ai/jev` / *(none)* | send Jev's questions to another server with the same API |
 | `SMITHY_WORKER_THREADS` | core count | background threads; kept modest, since the machine is also serving a model |
 | `SMITHY_LSP_LIGHT=1` | off | trades real compiler diagnostics for rust-analyzer's largest memory saving |
 | `SMITHY_SKY_LAT` / `SMITHY_SKY_LON` | San Francisco | observer location for the Forged sky backdrop |
