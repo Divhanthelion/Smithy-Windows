@@ -365,8 +365,18 @@ what needs you, every Task with its checks and commit, why the blocked ones are
 blocked, research Notes and how many of their findings verified, commands it
 would have asked about, and every decision. `smithy-agent run --resume` picks up
 after a crash (an interrupted Attempt's work is stashed, never discarded);
-`smithy-agent runs` lists them. Rust, CMake + ctest and pytest are detected;
-`.smithy/checks.toml` sets the commands for anything else.
+`smithy-agent runs` lists them. `--detach` starts the Run as a process of its
+own, so closing the terminal (or the agent session that started it) does not
+end it. Rust, CMake + ctest and pytest are detected; `.smithy/checks.toml`
+sets the commands for anything else, and the Run checks before it starts that
+every program those commands use (including `cargo clippy`-style plugins) is
+installed. The records on the Run's branch name paths relative to the Project
+and home directory, never with your user name.
+
+[`reports/2026-09-24-unattended-runs-on-the-thor.md`](reports/2026-09-24-unattended-runs-on-the-thor.md)
+is the field report: five real Runs on a Jetson AGX Thor with a local model,
+what broke, what was changed, and a real project checked against an outside
+reference.
 
 ### MCP
 

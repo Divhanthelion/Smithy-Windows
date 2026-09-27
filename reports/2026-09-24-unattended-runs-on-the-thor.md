@@ -245,10 +245,10 @@ everything around the model.
 # Technical report
 
 **Period:** 2026-09-23 17:36 UTC – 2026-09-25 23:25 UTC
-**Repository:** `Smithy-Windows` (private GitHub), 41 commits from `736e89a`
-to the commit carrying this report, 555 tests passing (smithy-agent 271 + 28
-integration, smithy-tools 158 + 7, smithy-run 66 + 16 end-to-end, smithy-cli
-9).
+**Repository:** `Smithy-Windows` on GitHub, 44 commits from `736e89a`
+to the commit carrying this report, 562 tests passing (smithy-agent 271 + 28
+integration, smithy-tools 158 + 7, smithy-run 72 + 16 end-to-end, smithy-cli
+10).
 **Hardware:** NVIDIA Jetson AGX Thor, 128 GB unified memory (122.8 GiB
 visible), JetPack 7.1 / L4T R38, 1 TB NVMe; Windows 11 laptop as the
 Smithy host.
@@ -616,19 +616,21 @@ results. What remains:
    Python's `//` inside a heredoc fed to `python` is still refused as a path.
    Acceptable while the model has the `write` tool and other ways round.
 
-From the real project (§11):
+From the real project (§11). The first four were fixed on 27 September
+(`d47fdb0`); the fifth is a direction, not a bug:
 
-6. **Preflight should run the checks' tools.** It confirms `cargo` exists but
-   not `cargo clippy`; T3 spent 42 minutes finding out.
-7. **The planner researches.** 78 minutes, 18 web calls of its own, a
-   60-minute turn limit reached. The plan should ask research questions,
-   not answer them.
-8. **Run records name local paths.** The branch's `.smithy/runs/` files carry
-   absolute paths with user names; on a public repository that leaks. Paths
-   relative to the Project and the log root, or records kept off the branch.
-9. **A Run should survive the session that starts it.** It died with the
-   laptop's Claude Code session; the Thor launcher (`setsid nohup`) is the
-   pattern.
+6. ~~**Preflight should run the checks' tools.**~~ It now probes cargo
+   subcommands that do not ship with cargo (`cargo clippy`, `cargo fmt`,
+   `cargo nextest`) and says how to install them.
+7. ~~**The planner researches.**~~ The planning Session has no web tools and
+   is told that what must be looked up goes into a task's `research`.
+8. ~~**Run records name local paths.**~~ State, plan, report, decisions and
+   checkpoint messages write the Project as `.` and the home directory as
+   `~`, in every spelling a path takes (native, forward slashes, Git Bash,
+   JSON-escaped).
+9. ~~**A Run should survive the session that starts it.**~~ `smithy-agent run
+   --detach` starts it as a process of its own. A restart still ends it;
+   `--resume` carries on.
 10. **Checks cannot see a wrong reason not to test.** The Daf Yomi comment
     that excused cycles 8–9 from testing was wrong. A reviewer pass against an
     outside reference, where one exists, is worth considering.
@@ -1050,6 +1052,17 @@ directory's absence did, until fixed.
 - **Where the checks' blind spot is:** a confident, wrong comment that
   justified *not* testing something. Only an outside reference caught it.
 
+### 11.8 Afterwards
+
+The review's findings about the project itself were then fixed by hand
+(with Claude Code), and hebrew-calendar 0.2 was published: Israel and
+diaspora observance, every holiday Hebcal lists, Torah readings for both,
+zmanim in the location's own time zone, and a new desktop app and web page.
+A checker in the repository (`tools/check_against_hebcal.py`) now compares
+every day from 1950 to 2080 with Hebcal in both observances and finds no
+differences. The Run's molad and Daf Yomi code went in unchanged apart from
+the wrong comment, which became two tests.
+
 ## Appendix A. Commits
 
 ```
@@ -1093,6 +1106,9 @@ f1d2be2 Report and DESIGN: the guardrail's stop side is uncalibrated
 57fced1 Resume: new ceilings, and a log directory from another machine
 95dadcd LM Studio provider: every request refused for min_p retries, not only the first
 c9b8cdd Runs: a scratch directory the shell allows, and deleting what you made
+9a04d99 Report: a real project — hebrew-calendar, checked against Hebcal
+d47fdb0 Runs: what the hebrew-calendar Run needed a person for
+85c4338 Formatting, and the float literals the newer compiler will reject
 ```
 
 ## Appendix B. Thor state
