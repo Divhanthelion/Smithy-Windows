@@ -155,6 +155,10 @@ impl DecisionLog {
                 .map(|b| b.last().is_some_and(|&c| c != b'\n'))
                 .unwrap_or(false);
             let json = serde_json::to_string(line).map_err(std::io::Error::other)?;
+            let json = match crate::state::record_root(&self.path) {
+                Some(root) => crate::state::scrub_paths(&json, &root),
+                None => json,
+            };
             if torn {
                 writeln!(f)?;
             }

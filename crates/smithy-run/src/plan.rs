@@ -343,8 +343,9 @@ make every decision yourself and write it down.
 ## What you produce
 
 A plan in TOML, in a single ```toml fenced block in your final answer. Read the Project first \
-(ls, read, grep, explore) so the plan fits what is already there. Do not write any files and do \
-not start building; the runner does that task by task.
+(ls, read, grep) so the plan fits what is already there. Do not write any files and do not start \
+building; the runner does that task by task. You have no web access while planning: what must be \
+looked up goes into a task's `research`, and the runner researches it before the task starts.
 
 ```toml
 intent = \"<the intent, verbatim>\"

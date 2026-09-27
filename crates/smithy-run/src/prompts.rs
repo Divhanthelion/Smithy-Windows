@@ -204,9 +204,10 @@ mod tests {
             passed: false,
             verdict: "exit 101".into(),
             tests: None,
-            excerpt: "   Compiling hebrew_core v0.1.0 (/home/user/code/hebrew-calendar/hebrew_core)\n\
+            excerpt:
+                "   Compiling hebrew_core v0.1.0 (/home/user/code/hebrew-calendar/hebrew_core)\n\
                       error[E0425]: cannot find function `molad_parts` in this scope\n"
-                .into(),
+                    .into(),
             seconds: 3,
         };
         let q = failure_question(&plan.tasks[0], &failure);

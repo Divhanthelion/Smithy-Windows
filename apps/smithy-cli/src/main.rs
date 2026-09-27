@@ -27,7 +27,11 @@ async fn run() -> Result<(), String> {
             print!("{}", run::usage());
             return Ok(());
         }
-        let (cmd, project) = run::parse(first == "runs", &raw[1..])?;
+        let words = run::without_detach(&raw[1..]);
+        let (cmd, project) = run::parse(first == "runs", &words)?;
+        if first == "run" && words.len() < raw.len() - 1 {
+            return run::detach(&raw, &project);
+        }
         return run::run(cmd, &project).await;
     }
     if raw.iter().any(|a| a == "-h" || a == "--help") {

@@ -340,9 +340,77 @@ pub fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
         std::fs::create_dir_all(dir)
             .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
     }
+    let text = match record_root(path) {
+        Some(root) => scrub_paths(text, &root),
+        None => text.to_string(),
+    };
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, text).map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, path).map_err(|e| format!("could not replace {}: {e}", path.display()))
+}
+
+/// The Project root of a file in `<root>/.smithy/runs/<id>/`, if it is one.
+pub fn record_root(path: &Path) -> Option<PathBuf> {
+    let mut up = path.ancestors();
+    let (_, _, runs, smithy, root) = (up.next()?, up.next()?, up.next()?, up.next()?, up.next()?);
+    (runs.file_name()? == "runs" && smithy.file_name()? == ".smithy").then(|| root.to_path_buf())
+}
+
+/// A Run's records are committed to its branch, which may be pushed, so the
+/// paths in them name the Project as `.` and the home directory as `~`
+/// rather than with a user name. The hebrew-calendar Run's records carried
+/// both a Windows and a Linux user name in some 3,000 lines.
+pub fn scrub_paths(text: &str, root: &Path) -> String {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+    scrub_paths_with(text, root, home.as_deref())
+}
+
+fn scrub_paths_with(text: &str, root: &Path, home: Option<&Path>) -> String {
+    let mut out = text.to_string();
+    for (path, with) in [(Some(root), "."), (home, "~")] {
+        let Some(path) = path else { continue };
+        for form in path_spellings(path) {
+            // Never a bare drive or `/`: that would rewrite every path.
+            if form.trim_matches(['/', '\\', ':']).len() > 2 {
+                out = out.replace(&form, with);
+            }
+        }
+    }
+    out
+}
+
+/// The ways a path is written in logs and commands: as the OS writes it,
+/// with forward slashes, as Git Bash writes a drive (`/c/Users/…`), with
+/// either case of drive letter, and with backslashes escaped for JSON.
+/// Longest first, so the JSON form is replaced before its unescaped part.
+fn path_spellings(path: &Path) -> Vec<String> {
+    let native = path.to_string_lossy();
+    let native = native.strip_prefix(r"\\?\").unwrap_or(&native);
+    let slashed = native.trim_end_matches(['/', '\\']).replace('\\', "/");
+    let mut forward = vec![slashed.clone()];
+    if let Some((drive, rest)) = slashed.split_once(":/") {
+        if drive.len() == 1 {
+            forward.push(format!("{}:/{rest}", drive.to_ascii_lowercase()));
+            forward.push(format!("{}:/{rest}", drive.to_ascii_uppercase()));
+            forward.push(format!("/{}/{rest}", drive.to_ascii_lowercase()));
+        }
+    }
+    let mut forms = Vec::new();
+    for f in forward {
+        let backslashed = if f.starts_with('/') {
+            f.clone()
+        } else {
+            f.replace('/', "\\")
+        };
+        forms.push(backslashed.replace('\\', "\\\\"));
+        forms.push(backslashed);
+        forms.push(f);
+    }
+    forms.sort_by_key(|f| std::cmp::Reverse(f.len()));
+    forms.dedup();
+    forms
 }
 
 pub fn unix_now() -> u64 {
@@ -430,5 +498,45 @@ mod tests {
         assert_eq!(human_duration(40), "40s");
         assert_eq!(human_duration(720), "12m");
         assert_eq!(human_duration(3 * 3600 + 4 * 60), "3h 04m");
+    }
+
+    #[test]
+    fn records_name_the_project_and_home_without_a_user_name() {
+        let root = Path::new(r"C:\Users\someone\code\calendar");
+        let home = Path::new(r"C:\Users\someone");
+        let text = concat!(
+            r#"{"cmd": "cd /c/Users/someone/code/calendar && cat > /c/Users/someone/AppData/Local/Temp/x.py", "#,
+            r#""log_dir": "C:\\Users\\someone\\.local\\share", "#,
+            r#""note": "wrote c:/Users/someone/code/calendar/src/lib.rs and C:\Users\someone\n.txt"}"#
+        );
+        let out = scrub_paths_with(text, root, Some(home));
+        assert!(!out.contains("someone"), "{out}");
+        assert!(
+            out.contains("cd . && cat > ~/AppData/Local/Temp/x.py"),
+            "{out}"
+        );
+        assert!(out.contains(r#""log_dir": "~\\.local\\share""#), "{out}");
+        assert!(out.contains(r"wrote ./src/lib.rs and ~\n.txt"), "{out}");
+    }
+
+    #[test]
+    fn linux_paths_and_the_record_root() {
+        let out = scrub_paths_with(
+            "Compiling core (/home/someone/code/cal/core); logs in /home/someone/.local/share",
+            Path::new("/home/someone/code/cal"),
+            Some(Path::new("/home/someone")),
+        );
+        assert_eq!(out, "Compiling core (./core); logs in ~/.local/share");
+        assert_eq!(
+            record_root(Path::new("/p/.smithy/runs/r1/REPORT.md")),
+            Some(PathBuf::from("/p"))
+        );
+        assert_eq!(record_root(Path::new("/p/notes/r1/REPORT.md")), None);
+    }
+
+    #[test]
+    fn a_short_home_is_left_alone() {
+        let out = scrub_paths_with("C:/ and /", Path::new("/x/y/z"), Some(Path::new("C:/")));
+        assert_eq!(out, "C:/ and /");
     }
 }

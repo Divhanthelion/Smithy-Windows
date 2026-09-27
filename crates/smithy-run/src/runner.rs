@@ -1816,9 +1816,11 @@ The question: {q}",
     /// Save, then commit everything. The commit's sha, if it landed.
     fn checkpoint(&mut self, message: &str) -> Option<String> {
         self.save();
+        // The commit message goes onto the branch with the records.
+        let message = crate::state::scrub_paths(message, &self.root);
         match self
             .git
-            .checkpoint(message, &self.state.preexisting_untracked)
+            .checkpoint(&message, &self.state.preexisting_untracked)
         {
             Ok(sha) => Some(sha),
             Err(e) => {
@@ -1862,35 +1864,23 @@ The question: {q}",
 /// Checks will run with. The first real Run spent an hour planning,
 /// researching and building before `exit 127` from `cargo build` said the
 /// shell could not see cargo; this says it in a second.
+///
+/// A cargo subcommand that does not come with cargo (`cargo clippy`, `cargo
+/// fmt`, `cargo nextest`) is probed too: the hebrew-calendar Run's lint Task
+/// spent 42 minutes finding out that `cargo clippy` was not installed.
 pub fn preflight(toolchain: &Toolchain, root: &Path) -> Result<(), String> {
-    let mut programs: Vec<String> = [
-        &toolchain.build,
-        &Some(toolchain.test.clone()),
-        &toolchain.lint,
-    ]
-    .into_iter()
-    .flatten()
-    .flat_map(|cmd| {
-        cmd.split("&&")
-            .filter_map(|p| p.split_whitespace().next().map(str::to_string))
-            .collect::<Vec<_>>()
-    })
-    .collect();
-    programs.sort();
-    programs.dedup();
+    let (programs, plugins) = needed_programs(toolchain);
+    let runs = |probe: &str| {
+        smithy_tools::tools::bash::run_captured(probe, root, Duration::from_secs(60))
+            .map(|c| c.success())
+            .unwrap_or(false)
+    };
     let missing: Vec<String> = programs
         .into_iter()
-        .filter(|p| {
-            let probe = format!("command -v {p}");
-            smithy_tools::tools::bash::run_captured(&probe, root, Duration::from_secs(30))
-                .map(|c| !c.success())
-                .unwrap_or(true)
-        })
+        .filter(|p| !runs(&format!("command -v {p}")))
         .collect();
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
+    if !missing.is_empty() {
+        return Err(format!(
             "the Checks need {} but the shell cannot find {} on its PATH; start the Run from a \
              shell where {} runs",
             missing.join(", "),
@@ -1900,7 +1890,110 @@ pub fn preflight(toolchain: &Toolchain, root: &Path) -> Result<(), String> {
                 .map(|m| format!("`{m}`"))
                 .collect::<Vec<_>>()
                 .join(" and ")
-        ))
+        ));
+    }
+    let missing: Vec<String> = plugins
+        .into_iter()
+        .filter(|sub| !runs(&format!("cargo {sub} --version")))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "the Checks run {} but this machine does not have {}; install {} first ({})",
+        missing
+            .iter()
+            .map(|s| format!("`cargo {s}`"))
+            .collect::<Vec<_>>()
+            .join(" and "),
+        if missing.len() == 1 { "it" } else { "them" },
+        if missing.len() == 1 { "it" } else { "them" },
+        missing
+            .iter()
+            .map(|s| install_hint(s))
+            .collect::<Vec<_>>()
+            .join("; ")
+    ))
+}
+
+/// Subcommands that ship with cargo itself; any other is a separate install.
+const CARGO_BUILTIN: &[&str] = &[
+    "add",
+    "b",
+    "bench",
+    "build",
+    "c",
+    "check",
+    "clean",
+    "config",
+    "d",
+    "doc",
+    "fetch",
+    "fix",
+    "generate-lockfile",
+    "help",
+    "info",
+    "init",
+    "install",
+    "locate-project",
+    "metadata",
+    "new",
+    "package",
+    "pkgid",
+    "publish",
+    "r",
+    "remove",
+    "report",
+    "run",
+    "rustc",
+    "rustdoc",
+    "search",
+    "t",
+    "test",
+    "tree",
+    "uninstall",
+    "update",
+    "vendor",
+    "verify-project",
+    "version",
+];
+
+/// The programs the toolchain's commands start with, and the cargo
+/// subcommands they use that do not ship with cargo.
+fn needed_programs(toolchain: &Toolchain) -> (Vec<String>, Vec<String>) {
+    let mut programs = Vec::new();
+    let mut plugins = Vec::new();
+    let commands = [
+        &toolchain.build,
+        &Some(toolchain.test.clone()),
+        &toolchain.lint,
+    ];
+    for part in commands.into_iter().flatten().flat_map(|c| c.split("&&")) {
+        let mut words = part.split_whitespace();
+        let Some(program) = words.next() else {
+            continue;
+        };
+        programs.push(program.to_string());
+        if program == "cargo" {
+            // `cargo +nightly clippy`: skip a toolchain override.
+            let sub = words.find(|w| !w.starts_with('+'));
+            if let Some(sub) = sub.filter(|s| !s.starts_with('-') && !CARGO_BUILTIN.contains(s)) {
+                plugins.push(sub.to_string());
+            }
+        }
+    }
+    for list in [&mut programs, &mut plugins] {
+        list.sort();
+        list.dedup();
+    }
+    (programs, plugins)
+}
+
+fn install_hint(subcommand: &str) -> String {
+    match subcommand {
+        "clippy" => "`rustup component add clippy`".to_string(),
+        "fmt" => "`rustup component add rustfmt`".to_string(),
+        other => format!("`cargo install cargo-{other}`"),
     }
 }
 
@@ -2025,4 +2118,49 @@ pub fn list_runs(root: &Path) -> Vec<(String, String)> {
         .collect();
     runs.sort_by(|a, b| b.0.cmp(&a.0));
     runs
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::*;
+
+    fn toolchain(build: &str, test: &str, lint: &str) -> Toolchain {
+        Toolchain {
+            build: Some(build.into()),
+            test: test.into(),
+            lint: Some(lint.into()),
+            ..Toolchain::rust()
+        }
+    }
+
+    #[test]
+    fn cargo_plugins_are_probed_and_builtins_are_not() {
+        let t = toolchain(
+            "cargo build -p hebrew_core --all-targets",
+            "cargo nextest run && cargo test --doc",
+            "cargo +nightly clippy -p hebrew_core -- -D warnings && cargo fmt --check",
+        );
+        let (programs, plugins) = needed_programs(&t);
+        assert_eq!(programs, vec!["cargo"]);
+        assert_eq!(plugins, vec!["clippy", "fmt", "nextest"]);
+    }
+
+    #[test]
+    fn other_toolchains_only_need_their_programs() {
+        let t = toolchain(
+            "cmake --build build",
+            "ctest --test-dir build",
+            "ruff check .",
+        );
+        let (programs, plugins) = needed_programs(&t);
+        assert_eq!(programs, vec!["cmake", "ctest", "ruff"]);
+        assert!(plugins.is_empty());
+    }
+
+    #[test]
+    fn install_hints_name_the_fix() {
+        assert_eq!(install_hint("clippy"), "`rustup component add clippy`");
+        assert_eq!(install_hint("fmt"), "`rustup component add rustfmt`");
+        assert_eq!(install_hint("nextest"), "`cargo install cargo-nextest`");
+    }
 }

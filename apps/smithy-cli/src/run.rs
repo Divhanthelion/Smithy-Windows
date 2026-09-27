@@ -89,10 +89,77 @@ smithy-agent runs [--project PATH]             every Run in this Project
                          SMITHY_RUN_LOG_DIR)
 --slots N                requests the model server takes at once (default 1;
                          SMITHY_RUN_SLOTS); above 1, research runs side by side
+--detach                 start the Run as a process of its own and return: it
+                         keeps going when this terminal, or the agent session
+                         that ran the command, ends (not across a restart: use
+                         --resume); output goes to ~/.local/share/smithy/runs/
+                         PROJECT/detached/
 
 A Run works on its own branch (smithy/run-ID), commits each Task when its
 checks pass, never pushes, and leaves .smithy/runs/ID/REPORT.md.
 "
+}
+
+/// The words without `--detach`, which only [`detach`] reads.
+pub fn without_detach(words: &[String]) -> Vec<String> {
+    words.iter().filter(|w| *w != "--detach").cloned().collect()
+}
+
+/// `--detach`: run this same command again as a process of its own — no
+/// terminal, its own process group, out of the parent's Windows job where
+/// the job allows it — with its output in a file, and return at once. The
+/// hebrew-calendar Run died with the session that started it and had to be
+/// moved to a machine where it was started with `setsid nohup`; this is
+/// that, built in.
+pub fn detach(raw: &[String], project: &Path) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    let exe = std::env::current_exe().map_err(|e| format!("cannot find this program: {e}"))?;
+    let project =
+        std::fs::canonicalize(project).map_err(|e| format!("{}: {e}", project.display()))?;
+    let dir = smithy_run::runlog::RunLog::default_dir(&project, "detached")
+        .ok_or("no home directory for the detached Run's output")?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    let log = dir.join(format!("{}.log", smithy_run::state::unix_now()));
+    let out = std::fs::File::create(&log).map_err(|e| format!("{}: {e}", log.display()))?;
+    let err = out.try_clone().map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(exe);
+    cmd.args(without_detach(raw))
+        .stdin(Stdio::null())
+        .stdout(out)
+        .stderr(err);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    let child = {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+        // A job that does not allow breakaway refuses the flag: then stay in it.
+        match cmd
+            .creation_flags(flags | CREATE_BREAKAWAY_FROM_JOB)
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(_) => cmd
+                .creation_flags(flags)
+                .spawn()
+                .map_err(|e| e.to_string())?,
+        }
+    };
+    #[cfg(not(windows))]
+    let child = cmd.spawn().map_err(|e| e.to_string())?;
+    println!(
+        "The Run is going in the background (process {}). Its output: {}",
+        child.id(),
+        log.display()
+    );
+    Ok(())
 }
 
 /// `(command, project)` from the words after `run` (or `runs`).
@@ -384,6 +451,10 @@ pub async fn research_once(words: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Tools the planning Session does without: the web, and `explore`, which
+/// can search it.
+const PLANNER_WITHOUT: [&str; 3] = ["web_fetch", "web_search", "explore"];
+
 /// Sessions built like the REPL's, with the unattended hooks instead of the
 /// interactive ones and no MCP (its tools' review hook would have nobody to
 /// ask). The Map and the Index are rebuilt for each Session, because the
@@ -420,6 +491,18 @@ impl Agents for CliAgents {
             p.brave_configured,
             index,
         );
+        if matches!(purpose, Purpose::Plan) {
+            // The planner asks research questions; it does not answer them.
+            // Given the web, the hebrew-calendar planner spent 78 minutes
+            // researching before it planned.
+            let keep: Vec<String> = registry
+                .names()
+                .into_iter()
+                .filter(|n| !PLANNER_WITHOUT.contains(n))
+                .map(str::to_string)
+                .collect();
+            registry.retain_named(&keep);
+        }
         let task = match purpose {
             Purpose::Build { task } => Some(task.clone()),
             Purpose::Research { task, .. } => task.clone(),
@@ -472,6 +555,20 @@ mod tests {
 
     fn words(s: &[&str]) -> Vec<String> {
         s.iter().map(|w| w.to_string()).collect()
+    }
+
+    #[test]
+    fn detach_is_read_before_the_rest() {
+        let raw = words(&["run", "build it", "--detach", "--hours", "2"]);
+        assert_eq!(
+            without_detach(&raw),
+            words(&["run", "build it", "--hours", "2"])
+        );
+        assert!(parse(false, &without_detach(&raw[1..])).is_ok());
+        assert!(
+            parse(false, &raw[1..]).is_err(),
+            "parse itself does not know --detach"
+        );
     }
 
     #[test]
