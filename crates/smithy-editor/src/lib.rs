@@ -77,7 +77,9 @@ pub use forged::{circuit_backdrop, forged_frame, shell_inset, shell_top_inset};
 pub use hover_popup::{hover_popup, HoverState};
 pub use lsp::{LspDiagnostic, LspHandle, LspManager, LspResponse};
 pub use main_layout::{main_layout_view, LayoutTheme};
-pub use menu_bar::{accel, menu_bar, CONTROL, menu_overlay, Menu, MenuBarState, MenuItem, StatusReadout};
+pub use menu_bar::{
+    accel, menu_bar, menu_overlay, Menu, MenuBarState, MenuItem, StatusReadout, CONTROL,
+};
 pub use problems_panel::{is_same_file, problems_panel, DiagnosticsState, ProblemRow};
 pub use review::ChangeStatus;
 pub use review::{content_with_accepted_hunks, PendingChangeManager, PendingFileChange};

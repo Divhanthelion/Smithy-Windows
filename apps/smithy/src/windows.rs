@@ -25,9 +25,8 @@ pub fn fit_to_work_area(wanted: Size) -> Option<(Size, Point)> {
     };
     // SAFETY: SPI_GETWORKAREA writes one RECT through the pointer, which
     // points at a RECT we own for the duration of the call.
-    let ok = unsafe {
-        SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut area as *mut RECT).cast(), 0)
-    };
+    let ok =
+        unsafe { SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut area as *mut RECT).cast(), 0) };
     if ok == 0 {
         return None;
     }

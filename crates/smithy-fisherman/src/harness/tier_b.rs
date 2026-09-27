@@ -5,8 +5,7 @@
 //! a check is red for a real bug, leave it red.
 
 use crate::fisherman::{
-    self as f, door_glow, door_openness, scene_at, stage_layout, window_light, Scene,
-    BUILD_SECONDS,
+    self as f, door_glow, door_openness, scene_at, stage_layout, window_light, Scene, BUILD_SECONDS,
 };
 use crate::routine::{Doing, Place};
 

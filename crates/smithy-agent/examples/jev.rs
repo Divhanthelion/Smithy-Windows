@@ -54,7 +54,11 @@ fn step(name: &str, arguments: &str, result: &str) -> StepRecord {
 }
 
 fn test_fail(error: &str) -> StepRecord {
-    step("bash", r#"{"command":"cargo test"}"#, &format!("[exit 101]\nerror[E0308]: {error}"))
+    step(
+        "bash",
+        r#"{"command":"cargo test"}"#,
+        &format!("[exit 101]\nerror[E0308]: {error}"),
+    )
 }
 
 fn fix(path: &str, what: &str) -> StepRecord {
@@ -67,7 +71,11 @@ fn fix(path: &str, what: &str) -> StepRecord {
 
 /// (label, request, steps, looping?)
 fn loop_cases() -> Vec<(&'static str, &'static str, Vec<StepRecord>, bool)> {
-    let same_grep = step("grep", r#"{"pattern":"fn parse"}"#, "src/parse.rs:14: pub fn parse(");
+    let same_grep = step(
+        "grep",
+        r#"{"pattern":"fn parse"}"#,
+        "src/parse.rs:14: pub fn parse(",
+    );
     vec![
         (
             "the same grep six times",
@@ -95,9 +103,17 @@ fn loop_cases() -> Vec<(&'static str, &'static str, Vec<StepRecord>, bool)> {
             vec![
                 fix("CHANGELOG.md", "## 0.2"),
                 step("read", r#"{"path":"CHANGELOG.md"}"#, "## 0.2\n- Added X"),
-                step("bash", r#"{"command":"sleep 2 && grep 0.2 CHANGELOG.md"}"#, "## 0.2"),
+                step(
+                    "bash",
+                    r#"{"command":"sleep 2 && grep 0.2 CHANGELOG.md"}"#,
+                    "## 0.2",
+                ),
                 step("read", r#"{"path":"CHANGELOG.md"}"#, "## 0.2\n- Added X"),
-                step("bash", r#"{"command":"sleep 5 && grep 0.2 CHANGELOG.md"}"#, "## 0.2"),
+                step(
+                    "bash",
+                    r#"{"command":"sleep 5 && grep 0.2 CHANGELOG.md"}"#,
+                    "## 0.2",
+                ),
                 step("read", r#"{"path":"CHANGELOG.md"}"#, "## 0.2\n- Added X"),
             ],
             true,
@@ -105,10 +121,17 @@ fn loop_cases() -> Vec<(&'static str, &'static str, Vec<StepRecord>, bool)> {
         (
             "reading six different files",
             "Explain how a request flows from the CLI to the provider.",
-            ["main.rs", "args.rs", "boot.rs", "repl.rs", "session.rs", "provider.rs"]
-                .iter()
-                .map(|f| step("read", &format!(r#"{{"path":"src/{f}"}}"#), "…source…"))
-                .collect(),
+            [
+                "main.rs",
+                "args.rs",
+                "boot.rs",
+                "repl.rs",
+                "session.rs",
+                "provider.rs",
+            ]
+            .iter()
+            .map(|f| step("read", &format!(r#"{{"path":"src/{f}"}}"#), "…source…"))
+            .collect(),
             false,
         ),
         (
@@ -131,8 +154,16 @@ fn loop_cases() -> Vec<(&'static str, &'static str, Vec<StepRecord>, bool)> {
                 step("grep", r#"{"pattern":"struct Args"}"#, "src/args.rs:5"),
                 step("read", r#"{"path":"src/args.rs"}"#, "pub struct Args { … }"),
                 fix("src/args.rs", "pub verbose: bool,"),
-                step("bash", r#"{"command":"cargo test"}"#, "test result: ok. 42 passed"),
-                step("bash", r#"{"command":"git commit -am 'Add --verbose'"}"#, "[main 1a2b3c] Add --verbose"),
+                step(
+                    "bash",
+                    r#"{"command":"cargo test"}"#,
+                    "test result: ok. 42 passed",
+                ),
+                step(
+                    "bash",
+                    r#"{"command":"git commit -am 'Add --verbose'"}"#,
+                    "[main 1a2b3c] Add --verbose",
+                ),
             ],
             false,
         ),
@@ -140,7 +171,13 @@ fn loop_cases() -> Vec<(&'static str, &'static str, Vec<StepRecord>, bool)> {
 }
 
 /// (label, request, steps, answer, finished?)
-fn done_cases() -> Vec<(&'static str, &'static str, Vec<StepRecord>, &'static str, bool)> {
+fn done_cases() -> Vec<(
+    &'static str,
+    &'static str,
+    Vec<StepRecord>,
+    &'static str,
+    bool,
+)> {
     vec![
         (
             "did the work, tests pass",
@@ -222,7 +259,14 @@ const GUARDRAIL_ALLOW: &[&str] = &[
 ];
 
 /// (label, intent, title, why, checks, needs research?)
-fn research_cases() -> Vec<(&'static str, &'static str, &'static str, &'static str, &'static str, bool)> {
+fn research_cases() -> Vec<(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    bool,
+)> {
     vec![
         (
             "a standard's grammar",
@@ -277,15 +321,28 @@ fn research_cases() -> Vec<(&'static str, &'static str, &'static str, &'static s
 
 /// (label, task, attempt, rounds, context %, acceptable picks)
 #[allow(clippy::type_complexity)]
-fn next_cases() -> Vec<(&'static str, &'static str, usize, Vec<(&'static str, &'static str)>, u32, &'static [&'static str])> {
+fn next_cases() -> Vec<(
+    &'static str,
+    &'static str,
+    usize,
+    Vec<(&'static str, &'static str)>,
+    u32,
+    &'static [&'static str],
+)> {
     vec![
         (
             "failures shrinking",
             "T2 Parse the time part of a duration",
             1,
             vec![
-                ("exit 101 (2 passed, 5 failed)", "---- time::hours ---- panicked: left 0 right 3600"),
-                ("exit 101 (5 passed, 2 failed)", "---- time::fraction ---- panicked: left 0 right 500"),
+                (
+                    "exit 101 (2 passed, 5 failed)",
+                    "---- time::hours ---- panicked: left 0 right 3600",
+                ),
+                (
+                    "exit 101 (5 passed, 2 failed)",
+                    "---- time::fraction ---- panicked: left 0 right 500",
+                ),
             ],
             35,
             &["continue"],
@@ -295,9 +352,18 @@ fn next_cases() -> Vec<(&'static str, &'static str, usize, Vec<(&'static str, &'
             "T2 Parse the time part of a duration",
             1,
             vec![
-                ("exit 101 (4 passed, 1 failed)", "---- time::minutes ---- panicked at src/time.rs:40: left 60 right 3600"),
-                ("exit 101 (4 passed, 1 failed)", "---- time::minutes ---- panicked at src/time.rs:41: left 60 right 3600"),
-                ("exit 101 (4 passed, 1 failed)", "---- time::minutes ---- panicked at src/time.rs:40: left 60 right 3600"),
+                (
+                    "exit 101 (4 passed, 1 failed)",
+                    "---- time::minutes ---- panicked at src/time.rs:40: left 60 right 3600",
+                ),
+                (
+                    "exit 101 (4 passed, 1 failed)",
+                    "---- time::minutes ---- panicked at src/time.rs:41: left 60 right 3600",
+                ),
+                (
+                    "exit 101 (4 passed, 1 failed)",
+                    "---- time::minutes ---- panicked at src/time.rs:40: left 60 right 3600",
+                ),
             ],
             45,
             &["handoff", "research"],
@@ -307,9 +373,18 @@ fn next_cases() -> Vec<(&'static str, &'static str, usize, Vec<(&'static str, &'
             "T3 Format durations with the humantime crate",
             1,
             vec![
-                ("exit 101", "error[E0425]: cannot find function `format_human` in crate `humantime`"),
-                ("exit 101", "error[E0599]: no method named `to_human` found for struct `Duration`"),
-                ("exit 101", "error[E0433]: failed to resolve: could not find `fmt` in `humantime`"),
+                (
+                    "exit 101",
+                    "error[E0425]: cannot find function `format_human` in crate `humantime`",
+                ),
+                (
+                    "exit 101",
+                    "error[E0599]: no method named `to_human` found for struct `Duration`",
+                ),
+                (
+                    "exit 101",
+                    "error[E0433]: failed to resolve: could not find `fmt` in `humantime`",
+                ),
             ],
             30,
             &["research"],
@@ -319,8 +394,14 @@ fn next_cases() -> Vec<(&'static str, &'static str, usize, Vec<(&'static str, &'
             "T4 Add the CLI with clap",
             1,
             vec![
-                ("exit 101 (6 passed, 3 failed)", "---- cli::weeks ---- panicked"),
-                ("exit 101 (8 passed, 1 failed)", "---- cli::help ---- panicked"),
+                (
+                    "exit 101 (6 passed, 3 failed)",
+                    "---- cli::weeks ---- panicked",
+                ),
+                (
+                    "exit 101 (8 passed, 1 failed)",
+                    "---- cli::help ---- panicked",
+                ),
             ],
             86,
             &["compact"],
@@ -330,8 +411,14 @@ fn next_cases() -> Vec<(&'static str, &'static str, usize, Vec<(&'static str, &'
             "T5 Publish the crate",
             2,
             vec![
-                ("exit 101", "error: no token found, please run `cargo login`"),
-                ("exit 101", "error: no token found, please run `cargo login`"),
+                (
+                    "exit 101",
+                    "error: no token found, please run `cargo login`",
+                ),
+                (
+                    "exit 101",
+                    "error: no token found, please run `cargo login`",
+                ),
             ],
             20,
             &["escalate", "block"],
@@ -418,7 +505,10 @@ fn guardrail_stop_cases() -> Vec<String> {
         .map(std::path::PathBuf::from)
         .or_else(|| {
             let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-            Some(std::path::PathBuf::from(home).join(".local/share/smithy/calibration/guardrail-stop.txt"))
+            Some(
+                std::path::PathBuf::from(home)
+                    .join(".local/share/smithy/calibration/guardrail-stop.txt"),
+            )
         });
     path.and_then(|p| std::fs::read_to_string(p).ok())
         .map(|t| {
@@ -441,7 +531,9 @@ async fn replay(jev: &Jev, path: &str) {
     let mut changed = 0;
     let mut asked = 0;
     for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
         if v["line"] != "decision" {
             continue;
         }
@@ -532,7 +624,11 @@ async fn main() {
         }
     }
 
-    let loops = if runs("loop") { loop_cases() } else { Vec::new() };
+    let loops = if runs("loop") {
+        loop_cases()
+    } else {
+        Vec::new()
+    };
     if runs("loop") {
         println!("\nloop: flags at ≥ {LOOP_THRESHOLD}");
     }
@@ -552,7 +648,11 @@ async fn main() {
         }
     }
 
-    let dones = if runs("done") { done_cases() } else { Vec::new() };
+    let dones = if runs("done") {
+        done_cases()
+    } else {
+        Vec::new()
+    };
     if runs("done") {
         println!("\ndone: sends back at < {DONE_THRESHOLD}");
     }
@@ -590,7 +690,11 @@ async fn main() {
                     misses += usize::from(!right);
                     let want = if should_stop { "stop " } else { "allow" };
                     // Stop cases are the user's; show only their position.
-                    let shown = if should_stop { "(local case)".to_string() } else { intent };
+                    let shown = if should_stop {
+                        "(local case)".to_string()
+                    } else {
+                        intent
+                    };
                     println!("  {} {p:.3}  [{want}] {shown}", mark(right));
                 }
                 Err(e) => {
@@ -605,7 +709,10 @@ async fn main() {
         println!("\nresearch: researches first at ≥ {RESEARCH_THRESHOLD}");
         for (label, intent, title, why, checks, needs) in research_cases() {
             total += 1;
-            match jev.needs_research(&research_state(intent, title, why, checks)).await {
+            match jev
+                .needs_research(&research_state(intent, title, why, checks))
+                .await
+            {
                 Ok(p) => {
                     let right = (p >= RESEARCH_THRESHOLD) == needs;
                     misses += usize::from(!right);
@@ -624,16 +731,24 @@ async fn main() {
         println!("\nnext: right when the pick is one of the acceptable moves");
         for (label, task, attempt, rounds, ctx, ok) in next_cases() {
             total += 1;
-            let rounds: Vec<(String, String)> =
-                rounds.iter().map(|(v, e)| (v.to_string(), e.to_string())).collect();
-            match jev.next_move(&next_state(task, attempt, 3, &rounds, ctx), &NextMove::ALL).await {
+            let rounds: Vec<(String, String)> = rounds
+                .iter()
+                .map(|(v, e)| (v.to_string(), e.to_string()))
+                .collect();
+            match jev
+                .next_move(&next_state(task, attempt, 3, &rounds, ctx), &NextMove::ALL)
+                .await
+            {
                 Ok(c) => {
                     let right = ok.contains(&c.pick.as_str());
                     misses += usize::from(!right);
                     let top: Vec<String> = {
                         let mut p: Vec<_> = c.probabilities.iter().collect();
                         p.sort_by(|a, b| b.1.total_cmp(a.1));
-                        p.iter().take(3).map(|(k, v)| format!("{k} {v:.2}")).collect()
+                        p.iter()
+                            .take(3)
+                            .map(|(k, v)| format!("{k} {v:.2}"))
+                            .collect()
                     };
                     println!(
                         "  {} {:<9} ({:.2})  [{}] {label}   — {}",

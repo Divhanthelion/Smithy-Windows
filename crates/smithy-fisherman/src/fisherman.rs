@@ -754,7 +754,12 @@ pub fn hut_for(w: f64, h: f64, band: f64) -> HutGeometry {
     let (scale, stage_left, _) = stage_layout(w, band);
     let width = band * HUT_WIDTH;
     let door_centre = stage_left + scale * 0.70;
-    HutGeometry::new(door_centre - width * DOOR_CENTRE, ground(h, band), width, band)
+    HutGeometry::new(
+        door_centre - width * DOOR_CENTRE,
+        ground(h, band),
+        width,
+        band,
+    )
 }
 
 /// Everything a frame needs. No clock, no globals — a value.
@@ -881,9 +886,8 @@ pub fn paint(ink: &mut impl Ink, scene: &Scene) {
     };
     // Once a walk has delivered him he stands, rather than striding on the
     // spot for the rest of the block.
-    let arrived = !building
-        && doing == Doing::Walking
-        && progress >= arrival_for(came_from, block_place);
+    let arrived =
+        !building && doing == Doing::Walking && progress >= arrival_for(came_from, block_place);
     let stance = if arrived {
         STANDING
     } else {
@@ -1091,7 +1095,11 @@ fn draw_line_and_rod(
     let path = line_path(tip, surface + 1.0, sway);
     ink.begin(Part::Line);
     ink.stroke(&path, LINE.with_alpha(0.75), 0.9);
-    let ring = Ellipse::new(Point::new(tip.x + sway, surface), (scale * 0.10, scale * 0.025), 0.0);
+    let ring = Ellipse::new(
+        Point::new(tip.x + sway, surface),
+        (scale * 0.10, scale * 0.025),
+        0.0,
+    );
     ink.stroke(&shape_path(&ring), LINE.with_alpha(0.45), 0.7);
 }
 
@@ -1128,7 +1136,10 @@ fn draw_jetty(ink: &mut impl Ink, w: f64, h: f64, band: f64, frame: u64) {
         (perch + scale * (1.0 + ROD_REACH) + band * 0.4).min(w - band * 1.7),
     );
     if x1 > x0 {
-        ink.fill(&shape_path(&Rect::new(x0, surface, x1, h)), WATER.with_alpha(0.85));
+        ink.fill(
+            &shape_path(&Rect::new(x0, surface, x1, h)),
+            WATER.with_alpha(0.85),
+        );
         // The surface catches the light in short broken strokes that drift.
         let drift = (frame as f64 * 0.35) % (scale * 0.5);
         let mut glints = BezPath::new();
@@ -1149,7 +1160,11 @@ fn draw_jetty(ink: &mut impl Ink, w: f64, h: f64, band: f64, frame: u64) {
     }
     let boards = Rect::new(d0, deck - scale * 0.02, d1, deck + scale * 0.06);
     ink.fill(&shape_path(&boards), WOOD);
-    ink.stroke(&shape_path(&boards), RIM.with_alpha(0.45), (scale * 0.02).max(0.5));
+    ink.stroke(
+        &shape_path(&boards),
+        RIM.with_alpha(0.45),
+        (scale * 0.02).max(0.5),
+    );
 }
 
 /// The lumber he builds the hut from, where he fetches each plank.
@@ -1178,7 +1193,11 @@ fn draw_lumber(ink: &mut impl Ink, w: f64, h: f64, band: f64, completion: f64) {
             floor - thick * i as f64,
         );
         ink.fill(&shape_path(&board), HUT_WALL);
-        ink.stroke(&shape_path(&board), RIM.with_alpha(0.40), (scale * 0.02).max(0.5));
+        ink.stroke(
+            &shape_path(&board),
+            RIM.with_alpha(0.40),
+            (scale * 0.02).max(0.5),
+        );
     }
 }
 

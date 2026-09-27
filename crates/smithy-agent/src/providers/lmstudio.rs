@@ -620,7 +620,10 @@ mod step_budget_tests {
             assert_eq!(r.content, "ok", "request {name}");
         }
         let later = ask().await.unwrap();
-        assert_eq!(later.content, "ok", "the flag sticks: no refusal to pay again");
+        assert_eq!(
+            later.content, "ok",
+            "the flag sticks: no refusal to pay again"
+        );
     }
 
     /// No reply cap goes to a local server, and thinking is only mentioned
@@ -715,7 +718,9 @@ fn openai_model_info(body: &str, configured: &str) -> Option<ModelInfo> {
     let value = serde_json::from_str::<Value>(body).ok()?;
     let models = value["data"].as_array()?;
     let resolved = resolve_model(configured, &parse_model_ids(body));
-    let entry = models.iter().find(|m| m["id"].as_str() == Some(&resolved))?;
+    let entry = models
+        .iter()
+        .find(|m| m["id"].as_str() == Some(&resolved))?;
     let window = entry["max_model_len"].as_i64()?;
     Some(ModelInfo {
         key: resolved,
@@ -1046,7 +1051,8 @@ mod resolve_tests {
     /// is not evidence of a loaded model, so it must not be reported as one.
     #[test]
     fn an_entry_without_a_served_window_says_nothing() {
-        let lmstudio = r#"{"data":[{"id":"qwen3.6-27b","object":"model","owned_by":"organization_owner"}]}"#;
+        let lmstudio =
+            r#"{"data":[{"id":"qwen3.6-27b","object":"model","owned_by":"organization_owner"}]}"#;
         assert!(openai_model_info(lmstudio, "qwen3.6-27b").is_none());
     }
 

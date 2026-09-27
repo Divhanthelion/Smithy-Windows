@@ -429,19 +429,33 @@ pub fn star_marks(sky: &SkyState, w: f64, h: f64, phase: f64) -> Vec<Mark> {
         let glow = star_glow(star.magnitude);
         if glow > 0.0 {
             let tint = vivid(colour, 2.2);
-            marks.push((disc(centre, core * 8.0), tint.with_alpha(alpha * 0.025 * glow)));
-            marks.push((disc(centre, core * 5.0), tint.with_alpha(alpha * 0.045 * glow)));
+            marks.push((
+                disc(centre, core * 8.0),
+                tint.with_alpha(alpha * 0.025 * glow),
+            ));
+            marks.push((
+                disc(centre, core * 5.0),
+                tint.with_alpha(alpha * 0.045 * glow),
+            ));
         }
         if star.magnitude < SPIKE_MAGNITUDE {
             let strength = f64::from((SPIKE_MAGNITUDE - star.magnitude) / 2.8).min(1.0);
             marks.push((
-                spikes(centre, core * 1.1, core * (4.0 + 6.0 * strength), core * 0.35),
+                spikes(
+                    centre,
+                    core * 1.1,
+                    core * (4.0 + 6.0 * strength),
+                    core * 0.35,
+                ),
                 colour.with_alpha(alpha * 0.55),
             ));
         }
         // Largest first, so the halo lies under a core drawn at full strength.
         for (multiple, ring) in STAR_RINGS {
-            marks.push((disc(centre, core * multiple), colour.with_alpha(alpha * ring)));
+            marks.push((
+                disc(centre, core * multiple),
+                colour.with_alpha(alpha * ring),
+            ));
         }
     }
     marks
@@ -1078,7 +1092,13 @@ mod tests {
             let mut paint = tiny_skia::Paint::default();
             paint.set_color(tiny_skia::Color::from_rgba(r, gg, b, a).unwrap());
             if let Some(p) = pb.finish() {
-                pm.fill_path(&p, &paint, tiny_skia::FillRule::Winding, Default::default(), None);
+                pm.fill_path(
+                    &p,
+                    &paint,
+                    tiny_skia::FillRule::Winding,
+                    Default::default(),
+                    None,
+                );
             }
         }
 
@@ -1103,7 +1123,10 @@ mod tests {
         let [r, g, b, _] = crate::design::FG.components;
         let fg = 0.2126 * wcag(r) + 0.7152 * wcag(g) + 0.0722 * wcag(b);
         let ratio = (fg + 0.05) / (brightest + 0.05);
-        assert!(ratio >= 4.5, "body text over the brightest pixel is {ratio:.2}:1");
+        assert!(
+            ratio >= 4.5,
+            "body text over the brightest pixel is {ratio:.2}:1"
+        );
     }
 
     /// The band is a haze behind the stars, never a stripe across the code:
@@ -1116,7 +1139,10 @@ mod tests {
         );
         let marks = milky_way_marks(&sky, 1100.0, 760.0);
         assert!(!marks.is_empty(), "an August night with no Milky Way");
-        let heaviest = marks.iter().map(|(_, c)| c.components[3]).fold(0.0f32, f32::max);
+        let heaviest = marks
+            .iter()
+            .map(|(_, c)| c.components[3])
+            .fold(0.0f32, f32::max);
         assert!(heaviest <= MILKY_WAY_ALPHA, "one sample at {heaviest}");
     }
 

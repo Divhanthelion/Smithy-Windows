@@ -614,7 +614,8 @@ fn leading_variable(token: &str) -> Option<(&str, &str)> {
     if let Some(braced) = body.strip_prefix('{') {
         let end = braced.find('}')?;
         let name = &braced[..end];
-        let simple = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let simple =
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
         return simple.then(|| (name, &braced[end + 1..]));
     }
     let end = body
@@ -749,14 +750,19 @@ fn subcommand<'a>(mut words: impl Iterator<Item = &'a str>) -> Option<&'a str> {
 fn program_name(word: &str) -> String {
     let base = word.rsplit(['/', '\\']).next().unwrap_or(word);
     let base = base.to_ascii_lowercase();
-    base.strip_suffix(".exe").map(str::to_string).unwrap_or(base)
+    base.strip_suffix(".exe")
+        .map(str::to_string)
+        .unwrap_or(base)
 }
 
 fn names_a_url(token: &str) -> bool {
     match token.find("://") {
         Some(i) => {
             let scheme = &token[..i];
-            let scheme = scheme.rsplit(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
+            let scheme = scheme
+                .rsplit(|c: char| !c.is_ascii_alphanumeric())
+                .next()
+                .unwrap_or("");
             !scheme.is_empty() && !scheme.eq_ignore_ascii_case("file")
         }
         None => false,
@@ -1113,11 +1119,20 @@ mod tests {
         let root = tmp.path();
         let scratch = scratch_dir_for(root);
         let s = scratch.display().to_string().replace('\\', "/");
-        assert!(!command_leaves_project(&format!("mkdir -p {s} && cat > {s}/probe.rs"), root));
-        assert!(!command_leaves_project(&format!("rustc {s}/probe.rs -o {s}/probe"), root));
+        assert!(!command_leaves_project(
+            &format!("mkdir -p {s} && cat > {s}/probe.rs"),
+            root
+        ));
+        assert!(!command_leaves_project(
+            &format!("rustc {s}/probe.rs -o {s}/probe"),
+            root
+        ));
         let other = std::env::temp_dir().join("smithy").join("someone-else");
         let o = other.display().to_string().replace('\\', "/");
-        assert!(command_leaves_project(&format!("cat {o}/x"), root), "only this Project's scratch");
+        assert!(
+            command_leaves_project(&format!("cat {o}/x"), root),
+            "only this Project's scratch"
+        );
     }
 
     /// Commands the second real Run was refused, verbatim but for the root.
@@ -1258,8 +1273,14 @@ mod tests {
         let root = project();
         let outside = tempfile::tempdir().unwrap();
         std::env::set_var("SMITHY_TEST_OUTSIDE_DIR", outside.path());
-        assert!(command_leaves_project("cat $SMITHY_TEST_OUTSIDE_DIR/.git-credentials", root));
-        assert!(command_leaves_project("cat ${SMITHY_TEST_OUTSIDE_DIR}/x", root));
+        assert!(command_leaves_project(
+            "cat $SMITHY_TEST_OUTSIDE_DIR/.git-credentials",
+            root
+        ));
+        assert!(command_leaves_project(
+            "cat ${SMITHY_TEST_OUTSIDE_DIR}/x",
+            root
+        ));
         assert!(command_leaves_project("ls $SMITHY_TEST_OUTSIDE_DIR", root));
         std::env::remove_var("SMITHY_TEST_OUTSIDE_DIR");
     }
@@ -1267,10 +1288,16 @@ mod tests {
     #[test]
     fn an_unresolvable_variable_with_a_path_fails_closed() {
         let root = project();
-        assert!(command_leaves_project("cat $SMITHY_NO_SUCH_VAR_7Q/secret", root));
+        assert!(command_leaves_project(
+            "cat $SMITHY_NO_SUCH_VAR_7Q/secret",
+            root
+        ));
         assert!(command_leaves_project("cat ${X:-/etc}/passwd", root));
         // PowerShell's drive syntax, reached through `powershell -c` from bash.
-        assert!(command_leaves_project(r"type $env:USERPROFILE\.git-credentials", root));
+        assert!(command_leaves_project(
+            r"type $env:USERPROFILE\.git-credentials",
+            root
+        ));
     }
 
     /// Loop variables and positionals are not paths anyone can see. Failing
@@ -1278,7 +1305,10 @@ mod tests {
     #[test]
     fn a_bare_shell_local_is_not_a_path() {
         let root = project();
-        assert!(!command_leaves_project("for f in *.rs; do wc -l $f; done", root));
+        assert!(!command_leaves_project(
+            "for f in *.rs; do wc -l $f; done",
+            root
+        ));
         assert!(!command_leaves_project("echo $1 $PATH", root));
         assert!(!command_leaves_project("ls $PWD/src", root));
     }

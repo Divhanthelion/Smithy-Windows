@@ -539,11 +539,18 @@ mod tests {
         let read = |f: &str| std::fs::read_to_string(root.join("r").join(f)).unwrap();
 
         install_bundled_into(root, v1, &[]);
-        assert_eq!((read("SKILL.md").as_str(), read("a.md").as_str()), ("v1", "a1"));
+        assert_eq!(
+            (read("SKILL.md").as_str(), read("a.md").as_str()),
+            ("v1", "a1")
+        );
 
         std::fs::write(root.join("r/a.md"), "mine").unwrap();
         install_bundled_into(root, v2, &[]);
-        assert_eq!(read("SKILL.md"), "v2", "untouched: upgraded via the manifest");
+        assert_eq!(
+            read("SKILL.md"),
+            "v2",
+            "untouched: upgraded via the manifest"
+        );
         assert_eq!(read("a.md"), "mine", "edited: left alone");
 
         // A pre-manifest install: no `.bundled`, content equal to an old release.
@@ -554,7 +561,11 @@ mod tests {
         let v1_hash = sha256_hex(b"v1");
         let known: &[(&str, &str, &str)] = &[("r", "SKILL.md", &v1_hash)];
         install_bundled_into(root, v2, known);
-        assert_eq!(read("SKILL.md"), "v2", "a known earlier release is upgraded");
+        assert_eq!(
+            read("SKILL.md"),
+            "v2",
+            "a known earlier release is upgraded"
+        );
     }
 
     #[test]
@@ -566,7 +577,10 @@ mod tests {
                 .and_then(|(_, fs)| fs.iter().find(|(f, _)| f == file))
                 .map(|(_, c)| sha256_hex(c.as_bytes()))
                 .unwrap();
-            assert_ne!(&shipped, hash, "{skill}/{file} is listed as superseded but is current");
+            assert_ne!(
+                &shipped, hash,
+                "{skill}/{file} is listed as superseded but is current"
+            );
         }
     }
 

@@ -453,7 +453,7 @@ pub fn agent_panel(
             .handle_border_radius(4.0)
     })
     .style(|s| {
-        s.flex_grow(1.0)
+        s.flex_grow(1.0_f32)
             .flex_basis(0.0)
             .width_full()
             .min_height(0.0)
@@ -627,7 +627,7 @@ fn header(
                         s.display(floem::taffy::Display::None)
                     })
             }),
-        Container::new(Empty::new()).style(|s| s.flex_grow(1.0)),
+        Container::new(Empty::new()).style(|s| s.flex_grow(1.0_f32)),
         // What the model knows about the project before you say anything.
         // Worth showing: a silently-degraded context (say, layout only because
         // `cargo metadata` failed) explains otherwise baffling answers.
@@ -635,7 +635,7 @@ fn header(
             // Gives way first: it is the least important thing on the row.
             nowrap(s)
                 .min_width(0.0)
-                .flex_shrink(2.0)
+                .flex_shrink(2.0_f32)
                 .color(catppuccin::SURFACE2)
                 .font_size(10.0)
                 .margin_right(8.0)
@@ -749,7 +749,7 @@ fn nowrap(s: floem::style::Style) -> floem::style::Style {
 /// `nowrap` at all, broke into "YOL / O" and "Sen / d". These keep their
 /// width; the model name and the context readout give way instead.
 fn chrome(s: floem::style::Style) -> floem::style::Style {
-    nowrap(s).flex_shrink(0.0)
+    nowrap(s).flex_shrink(0.0_f32)
 }
 
 fn icon_button(
@@ -986,7 +986,7 @@ fn batch_row(state: AgentPanelState, start: usize, steps: Vec<BatchedStep>) -> i
                     .color(catppuccin::SAPPHIRE)
                     .font_size(12.0)
                     .font_family(crate::design::MONO.to_string())
-                    .flex_grow(1.0)
+                    .flex_grow(1.0_f32)
                     .min_width(0.0)
             }),
             Label::derived(move || {
@@ -1147,7 +1147,7 @@ fn code_block(lang: String, code: String) -> impl IntoView {
                     .color(catppuccin::OVERLAY1)
                     .font_size(10.0)
                     .font_family(crate::design::MONO.to_string())
-                    .flex_grow(1.0)
+                    .flex_grow(1.0_f32)
                     .min_width(0.0)
             }),
             Label::derived(move || {
@@ -1391,7 +1391,7 @@ fn step_row(
                 s.color(catppuccin::OVERLAY1)
                     .font_size(11.0)
                     .font_family(crate::design::MONO.to_string())
-                    .flex_grow(1.0)
+                    .flex_grow(1.0_f32)
                     .min_width(0.0)
             }),
             Label::derived(move || {
@@ -1465,7 +1465,7 @@ fn banner(text: String, color: Color, glyph: &'static str) -> impl IntoView {
             s.color(color)
                 .font_size(11.5)
                 .line_height(1.4)
-                .flex_grow(1.0)
+                .flex_grow(1.0_f32)
         }),
     ))
     .style(move |s| {
@@ -1655,7 +1655,7 @@ fn attachment_row(state: AgentPanelState) -> impl IntoView {
                     .color(catppuccin::RED)
                     .apply_if(!over(), |s| s.display(floem::taffy::Display::None))
             }),
-            Container::new(Empty::new()).style(|s| s.flex_grow(1.0)),
+            Container::new(Empty::new()).style(|s| s.flex_grow(1.0_f32)),
             Label::derived(|| "Remove all".to_string())
                 .on_event_stop(floem::event::listener::Click, move |_, _| {
                     state.clear_attachments()
@@ -1967,7 +1967,7 @@ fn budget_bar(
                 }
             })
             .style(|s| s.color(catppuccin::SURFACE2).font_size(10.0)),
-            Container::new(Empty::new()).style(|s| s.flex_grow(1.0)),
+            Container::new(Empty::new()).style(|s| s.flex_grow(1.0_f32)),
             Label::derived(move || {
                 state
                     .context_usage
@@ -2442,12 +2442,12 @@ fn composer(
                     .min_width(0.0)
                     .font_size(10.0)
                     .color(if state.busy.get() {
-                    catppuccin::YELLOW
-                } else {
-                    catppuccin::SURFACE2
-                })
+                        catppuccin::YELLOW
+                    } else {
+                        catppuccin::SURFACE2
+                    })
             }),
-            Container::new(Empty::new()).style(|s| s.flex_grow(1.0)),
+            Container::new(Empty::new()).style(|s| s.flex_grow(1.0_f32)),
             microphone(state, hotkey, on_voice),
             // Send and Stop occupy the same slot — only one is ever meaningful.
             dyn_container(

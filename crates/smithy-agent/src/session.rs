@@ -881,8 +881,9 @@ impl Session {
                     // Bounded so a supervisor that is wrong cannot hold the
                     // turn open: the second answer stands.
                     if answer_nudges < MAX_ANSWER_NUDGES {
-                        if let Some(nudge) =
-                            self.observe_answer(turn_start, budget.step(), &answer).await
+                        if let Some(nudge) = self
+                            .observe_answer(turn_start, budget.step(), &answer)
+                            .await
                         {
                             answer_nudges += 1;
                             self.history
@@ -1273,7 +1274,11 @@ mod tests {
     fn flaky(
         failures: Vec<ProviderError>,
         script: Vec<Completion>,
-    ) -> (tempfile::TempDir, Session, Arc<crate::provider::test_support::FlakyProvider>) {
+    ) -> (
+        tempfile::TempDir,
+        Session,
+        Arc<crate::provider::test_support::FlakyProvider>,
+    ) {
         let tmp = tempfile::tempdir().unwrap();
         let ws = Workspace::open(tmp.path()).unwrap();
         let provider = Arc::new(crate::provider::test_support::FlakyProvider::new(
@@ -1308,7 +1313,10 @@ mod tests {
 
         let outcome = s.run_turn("go", None).await.unwrap();
 
-        assert!(matches!(&outcome, Outcome::Answer(a) if a == "done"), "{outcome:?}");
+        assert!(
+            matches!(&outcome, Outcome::Answer(a) if a == "done"),
+            "{outcome:?}"
+        );
         assert_eq!(provider.call_count(), 3);
         assert_eq!(
             s.history().len(),
@@ -1359,10 +1367,18 @@ mod tests {
         }
         async fn after_step(&self, turn: &TurnView<'_>) -> Verdict {
             self.seen_steps.lock().unwrap().push(turn.steps().len());
-            self.after_step.lock().unwrap().pop_front().unwrap_or(Verdict::Continue)
+            self.after_step
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Verdict::Continue)
         }
         async fn before_answer(&self, _turn: &TurnView<'_>, _answer: &str) -> Verdict {
-            self.before_answer.lock().unwrap().pop_front().unwrap_or(Verdict::Continue)
+            self.before_answer
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Verdict::Continue)
         }
     }
 
@@ -1375,12 +1391,16 @@ mod tests {
     #[tokio::test]
     async fn a_nudge_after_a_step_is_appended_after_its_result() {
         let (_t, mut s, _) = harness(vec![read_notes(), answer("FJORD")]);
-        let observer = ScriptedObserver::new(vec![Verdict::Nudge("change approach".into())], vec![]);
+        let observer =
+            ScriptedObserver::new(vec![Verdict::Nudge("change approach".into())], vec![]);
         s.observe(observer.clone());
 
         let outcome = s.run_turn("find the word", None).await.unwrap();
 
-        assert!(matches!(&outcome, Outcome::Answer(a) if a == "FJORD"), "{outcome:?}");
+        assert!(
+            matches!(&outcome, Outcome::Answer(a) if a == "FJORD"),
+            "{outcome:?}"
+        );
         assert_eq!(*observer.seen_steps.lock().unwrap(), vec![1]);
         let messages = s.history().messages();
         let nudge = messages
@@ -1393,11 +1413,17 @@ mod tests {
     #[tokio::test]
     async fn a_stop_after_a_step_ends_the_turn_with_its_reason() {
         let (_t, mut s, provider) = harness(vec![read_notes(), answer("unreached")]);
-        s.observe(ScriptedObserver::new(vec![Verdict::Stop("looping".into())], vec![]));
+        s.observe(ScriptedObserver::new(
+            vec![Verdict::Stop("looping".into())],
+            vec![],
+        ));
 
         let outcome = s.run_turn("find the word", None).await.unwrap();
 
-        assert!(matches!(&outcome, Outcome::Stopped(r) if r == "scripted: looping"), "{outcome:?}");
+        assert!(
+            matches!(&outcome, Outcome::Stopped(r) if r == "scripted: looping"),
+            "{outcome:?}"
+        );
         assert_eq!(provider.call_count(), 1, "no completion after the stop");
     }
 
@@ -1410,7 +1436,10 @@ mod tests {
 
         let outcome = s.run_turn("find the word", None).await.unwrap();
 
-        assert!(matches!(&outcome, Outcome::Answer(a) if a == "FJORD"), "{outcome:?}");
+        assert!(
+            matches!(&outcome, Outcome::Answer(a) if a == "FJORD"),
+            "{outcome:?}"
+        );
         assert_eq!(provider.call_count(), 2);
     }
 

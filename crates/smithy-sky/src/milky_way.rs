@@ -66,8 +66,11 @@ pub fn visible(local_sidereal_deg: f64, latitude_deg: f64) -> Vec<GlowPoint> {
             if weight < 0.04 {
                 continue;
             }
-            let horizontal =
-                equatorial_to_horizontal(galactic_to_equatorial(l, b), local_sidereal_deg, latitude_deg);
+            let horizontal = equatorial_to_horizontal(
+                galactic_to_equatorial(l, b),
+                local_sidereal_deg,
+                latitude_deg,
+            );
             if let Some(position) = project(horizontal) {
                 out.push(GlowPoint {
                     position,

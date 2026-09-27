@@ -245,11 +245,17 @@ mod tests {
     #[test]
     fn the_galactic_centre_is_in_sagittarius() {
         let centre = galactic_to_equatorial(0.0, 0.0);
-        assert!((centre.right_ascension_deg - 266.405).abs() < 0.01, "{centre:?}");
+        assert!(
+            (centre.right_ascension_deg - 266.405).abs() < 0.01,
+            "{centre:?}"
+        );
         assert!((centre.declination_deg + 28.936).abs() < 0.01, "{centre:?}");
 
         let pole = galactic_to_equatorial(0.0, 90.0);
-        assert!(separation_deg(pole, at(192.859_48, 27.128_25)) < 1e-6, "{pole:?}");
+        assert!(
+            separation_deg(pole, at(192.859_48, 27.128_25)) < 1e-6,
+            "{pole:?}"
+        );
     }
 
     #[test]

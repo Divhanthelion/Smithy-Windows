@@ -270,7 +270,7 @@ pub fn problems_panel(
                     .handle_border_radius(4.0)
             })
             .style(|s| {
-                s.flex_grow(1.0)
+                s.flex_grow(1.0_f32)
                     .flex_basis(0.0)
                     .width_full()
                     .min_height(0.0)
@@ -295,7 +295,7 @@ fn header(state: DiagnosticsState, on_close: impl Fn() + 'static) -> impl IntoVi
         }),
         Label::derived(move || summary_line(&state))
             .style(|s| s.font_size(design::TEXT_XS).color(design::FG_MUTED)),
-        Container::new(Empty::new()).style(|s| s.flex_grow(1.0)),
+        Container::new(Empty::new()).style(|s| s.flex_grow(1.0_f32)),
         // Why the panel is empty, when it is empty for the wrong reason.
         Label::derived(move || state.server_status.get().unwrap_or_default()).style(move |s| {
             s.font_size(design::TEXT_XS)
@@ -421,7 +421,7 @@ fn problem_row(row: ProblemRow, on_open: std::rc::Rc<dyn Fn(String, u32, u32)>) 
         Label::derived(move || message.clone()).style(|s| {
             s.color(design::FG)
                 .font_size(design::TEXT_SM)
-                .flex_grow(1.0)
+                .flex_grow(1.0_f32)
                 .min_width(0.0)
         }),
         Label::derived(move || code.clone()).style(|s| {
@@ -590,17 +590,16 @@ mod tests {
 
     /// A project reached through a symlink comes back from the language server
     /// resolved, and the diagnostic must still find the editor that has it open.
+    /// Unix only: creating a symlink on Windows needs a privilege that test
+    /// machines rarely have.
+    #[cfg(unix)]
     #[test]
     fn a_symlinked_path_is_the_same_file_as_its_target() {
         let dir = tempfile::tempdir().expect("tempdir");
         let real = dir.path().join("real.rs");
         std::fs::write(&real, "fn main() {}\n").expect("write");
         let link = dir.path().join("link.rs");
-
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&real, &link).expect("symlink");
-        #[cfg(not(unix))]
-        return;
 
         assert_ne!(real, link, "the paths differ textually");
         assert!(

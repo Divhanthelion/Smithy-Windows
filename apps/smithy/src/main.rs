@@ -454,7 +454,7 @@ fn app_view() -> impl IntoView {
                         open_editor,
                         signals.aesthetic,
                     ))
-                    .style(|s| s.flex_grow(1.0).width_full().min_height(0.0)),
+                    .style(|s| s.flex_grow(1.0_f32).width_full().min_height(0.0)),
                 ))
                 .style(|s| s.width_full().height_full())
                 .into_any()
@@ -598,14 +598,14 @@ fn app_view() -> impl IntoView {
         sidebar_mode_bar(sidebar_tab, move || hide_sidebar.set(false)),
         Container::new(file_browser).style(move |s| {
             if sidebar_tab.get() == SidebarTab::Files {
-                s.flex_grow(1.0).width_full().min_height(0.0)
+                s.flex_grow(1.0_f32).width_full().min_height(0.0)
             } else {
                 s.display(floem::style::Display::None)
             }
         }),
         Container::new(history_panel).style(move |s| {
             if sidebar_tab.get() == SidebarTab::History {
-                s.flex_grow(1.0).width_full().min_height(0.0)
+                s.flex_grow(1.0_f32).width_full().min_height(0.0)
             } else {
                 s.display(floem::style::Display::None)
             }
@@ -908,10 +908,14 @@ fn app_view() -> impl IntoView {
         smithy_editor::Menu::new(
             "Code",
             vec![
-                smithy_editor::MenuItem::action_with("Hover", &format!("{}K", smithy_editor::CONTROL), {
-                    let ask = ask_hover_menu.clone();
-                    move || ask()
-                }),
+                smithy_editor::MenuItem::action_with(
+                    "Hover",
+                    format!("{}K", smithy_editor::CONTROL),
+                    {
+                        let ask = ask_hover_menu.clone();
+                        move || ask()
+                    },
+                ),
                 smithy_editor::MenuItem::action_with("Go to Definition", "F12", {
                     let ask = ask_definition_menu.clone();
                     move || ask()
@@ -994,7 +998,11 @@ fn app_view() -> impl IntoView {
                     smithy_editor::accel("L"),
                     signals.agent_visible,
                 ),
-                smithy_editor::MenuItem::toggle_with("Terminal", &format!("{}`", smithy_editor::CONTROL), signals.terminal_visible),
+                smithy_editor::MenuItem::toggle_with(
+                    "Terminal",
+                    format!("{}`", smithy_editor::CONTROL),
+                    signals.terminal_visible,
+                ),
                 smithy_editor::MenuItem::Separator,
                 smithy_editor::MenuItem::toggle("Problems", problems_visible),
                 smithy_editor::MenuItem::toggle("Call Graph", agent_state.call_graph.visible),
@@ -1346,7 +1354,7 @@ fn app_view() -> impl IntoView {
     // Menu bar on top, then the main layout.
     let shell = Stack::vertical((
         menu_view,
-        Container::new(main_content).style(|s| s.flex_grow(1.0).width_full().min_height(0.0)),
+        Container::new(main_content).style(|s| s.flex_grow(1.0_f32).width_full().min_height(0.0)),
         dyn_container(
             move || problems_visible.get(),
             move |show| {
@@ -1500,7 +1508,7 @@ fn shell_approval_modal(
                                 .margin_bottom(16.0)
                         }),
                         Stack::horizontal((
-                            Container::new(Empty::new()).style(|s| s.flex_grow(1.0)),
+                            Container::new(Empty::new()).style(|s| s.flex_grow(1.0_f32)),
                             Button::new("Deny")
                                 .on_event_stop(floem::event::listener::Click, move |_, _| {
                                     req_deny.respond(false);

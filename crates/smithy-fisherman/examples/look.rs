@@ -56,20 +56,132 @@ const fn shot(
 }
 
 const SHOTS: &[Shot] = &[
-    shot("build-20", Doing::Walking, Place::Garden, Place::Garden, 0.0, 0.20, 8.0),
-    shot("build-55", Doing::Walking, Place::Garden, Place::Garden, 0.0, 0.55, 8.0),
-    shot("build-85", Doing::Walking, Place::Garden, Place::Garden, 0.0, 0.85, 8.0),
-    shot("exercising", Doing::Exercising, Place::Doorstep, Place::Hut, 0.5, 1.0, 8.0),
-    shot("coffee", Doing::Coffee, Place::Doorstep, Place::Hut, 0.5, 1.0, 8.0),
-    shot("gardening", Doing::Gardening, Place::Garden, Place::Doorstep, 0.5, 1.0, 9.0),
-    shot("cooking", Doing::Cooking, Place::Fire, Place::Perch, 0.5, 1.0, 18.0),
-    shot("eating", Doing::Eating, Place::Doorstep, Place::Fire, 0.5, 1.0, 19.0),
-    shot("smoking", Doing::Smoking, Place::Garden, Place::Garden, 0.5, 1.0, 12.0),
-    shot("walking-out", Doing::Walking, Place::Perch, Place::Garden, 0.05, 1.0, 10.0),
-    shot("walking-home", Doing::Walking, Place::Hut, Place::Garden, 0.92, 1.0, 20.0),
-    shot("reading", Doing::Reading, Place::Hut, Place::Doorstep, 0.5, 1.0, 22.0),
-    shot("sleeping", Doing::Sleeping, Place::Hut, Place::Doorstep, 0.5, 1.0, 23.5),
-    shot("fishing", Doing::Fishing, Place::Perch, Place::Garden, 0.5, 1.0, 10.0),
+    shot(
+        "build-20",
+        Doing::Walking,
+        Place::Garden,
+        Place::Garden,
+        0.0,
+        0.20,
+        8.0,
+    ),
+    shot(
+        "build-55",
+        Doing::Walking,
+        Place::Garden,
+        Place::Garden,
+        0.0,
+        0.55,
+        8.0,
+    ),
+    shot(
+        "build-85",
+        Doing::Walking,
+        Place::Garden,
+        Place::Garden,
+        0.0,
+        0.85,
+        8.0,
+    ),
+    shot(
+        "exercising",
+        Doing::Exercising,
+        Place::Doorstep,
+        Place::Hut,
+        0.5,
+        1.0,
+        8.0,
+    ),
+    shot(
+        "coffee",
+        Doing::Coffee,
+        Place::Doorstep,
+        Place::Hut,
+        0.5,
+        1.0,
+        8.0,
+    ),
+    shot(
+        "gardening",
+        Doing::Gardening,
+        Place::Garden,
+        Place::Doorstep,
+        0.5,
+        1.0,
+        9.0,
+    ),
+    shot(
+        "cooking",
+        Doing::Cooking,
+        Place::Fire,
+        Place::Perch,
+        0.5,
+        1.0,
+        18.0,
+    ),
+    shot(
+        "eating",
+        Doing::Eating,
+        Place::Doorstep,
+        Place::Fire,
+        0.5,
+        1.0,
+        19.0,
+    ),
+    shot(
+        "smoking",
+        Doing::Smoking,
+        Place::Garden,
+        Place::Garden,
+        0.5,
+        1.0,
+        12.0,
+    ),
+    shot(
+        "walking-out",
+        Doing::Walking,
+        Place::Perch,
+        Place::Garden,
+        0.05,
+        1.0,
+        10.0,
+    ),
+    shot(
+        "walking-home",
+        Doing::Walking,
+        Place::Hut,
+        Place::Garden,
+        0.92,
+        1.0,
+        20.0,
+    ),
+    shot(
+        "reading",
+        Doing::Reading,
+        Place::Hut,
+        Place::Doorstep,
+        0.5,
+        1.0,
+        22.0,
+    ),
+    shot(
+        "sleeping",
+        Doing::Sleeping,
+        Place::Hut,
+        Place::Doorstep,
+        0.5,
+        1.0,
+        23.5,
+    ),
+    shot(
+        "fishing",
+        Doing::Fishing,
+        Place::Perch,
+        Place::Garden,
+        0.5,
+        1.0,
+        10.0,
+    ),
 ];
 
 fn main() {
@@ -109,7 +221,10 @@ fn main() {
             (perch - band * 2.5, perch + band * 5.0)
         } else if s.completion < 1.0 {
             // The build runs from the hut out to the lumber pile.
-            (stage_left - band * 1.2, stage_left + 0.30 * stage + band * 2.5)
+            (
+                stage_left - band * 1.2,
+                stage_left + 0.30 * stage + band * 2.5,
+            )
         } else if s.doing == Doing::Walking && s.place == Place::Perch {
             let at = stage_left + 0.3 * stage;
             (at - band * 5.0, at + band * 5.0)

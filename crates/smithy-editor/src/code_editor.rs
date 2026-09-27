@@ -636,7 +636,7 @@ pub fn external_change_bar(
                         format!("{label} changed on disk, and you have unsaved edits.")
                     })
                     .style(|s| s.font_size(design::TEXT_XS).color(design::FG)),
-                    Container::new(Empty::new()).style(|s| s.flex_grow(1.0)),
+                    Container::new(Empty::new()).style(|s| s.flex_grow(1.0_f32)),
                     button("Discard my edits", true)
                         .on_event_stop(floem::event::listener::Click, move |_, _| reload()),
                     button("Keep my edits", false)
@@ -754,7 +754,10 @@ fn shortcut_list() -> impl IntoView {
         shortcut(crate::menu_bar::accel("L"), "toggle the agent"),
         // Control on every platform, which is the convention for this one and
         // what the handler matches.
-        shortcut(format!("{}`", crate::menu_bar::CONTROL), "toggle the terminal"),
+        shortcut(
+            format!("{}`", crate::menu_bar::CONTROL),
+            "toggle the terminal",
+        ),
     ))
     // A card of its own: it floats over the project map, and without a ground
     // the two texts ran into each other and neither could be read.

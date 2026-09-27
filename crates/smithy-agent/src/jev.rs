@@ -134,12 +134,14 @@ impl Jev {
 
     /// Probability, 0 to 1, that this command deserves a human look first.
     pub async fn shell_risk(&self, command: &str, root: &Path) -> Result<f64, String> {
-        self.ask_noul(shell_state(command, root), SHELL_QUESTION).await
+        self.ask_noul(shell_state(command, root), SHELL_QUESTION)
+            .await
     }
 
     /// Probability that the agent is going in circles.
     pub async fn loop_risk(&self, request: &str, steps: &[StepRecord]) -> Result<f64, String> {
-        self.ask_noul(loop_state(request, steps), LOOP_QUESTION).await
+        self.ask_noul(loop_state(request, steps), LOOP_QUESTION)
+            .await
     }
 
     /// Probability that the turn has done what was asked.
@@ -149,7 +151,8 @@ impl Jev {
         steps: &[StepRecord],
         answer: &str,
     ) -> Result<f64, String> {
-        self.ask_noul(done_state(request, steps, answer), DONE_QUESTION).await
+        self.ask_noul(done_state(request, steps, answer), DONE_QUESTION)
+            .await
     }
 
     /// One `noul` question, retried on transient failures per `retries`.
@@ -163,7 +166,9 @@ impl Jev {
             "state": state,
             "questions": { "q": { "type": "noul", "instructions": instructions } },
         });
-        self.post_retrying(&body).await.and_then(|text| noul(&text, "q"))
+        self.post_retrying(&body)
+            .await
+            .and_then(|text| noul(&text, "q"))
     }
 
     /// One `choice` question: which of `options` (name, when to pick it).
@@ -182,7 +187,9 @@ impl Jev {
             "state": state,
             "questions": { "q": { "type": "choice", "instructions": instructions, "criteria": criteria } },
         });
-        self.post_retrying(&body).await.and_then(|text| choice(&text, "q"))
+        self.post_retrying(&body)
+            .await
+            .and_then(|text| choice(&text, "q"))
     }
 
     async fn post_retrying(&self, body: &Value) -> Result<String, String> {
@@ -500,24 +507,28 @@ No for ordinary software, including: tools that operate on the user's own files,
 accounts; security testing of the user's own code; parsers, CLIs, games, servers, libraries, \
 tests, and scrapers of public pages within their terms.";
 
-const RESEARCH_QUESTION: &str = "Does this task depend on exact facts from outside the project that \
+const RESEARCH_QUESTION: &str =
+    "Does this task depend on exact facts from outside the project that \
 an AI coding agent is unlikely to know reliably from memory — the precise grammar or edge cases of \
 a specification or standard, a file or wire format, an external API or protocol, or \
 version-specific behaviour of a dependency — so that getting them slightly wrong would make the \
 code wrong? No if general programming knowledge and the project's own code are enough.";
 
-const CHEAT_QUESTION: &str = "Were these changes to tests made to get failing tests to pass rather \
+const CHEAT_QUESTION: &str =
+    "Were these changes to tests made to get failing tests to pass rather \
 than to reflect a deliberate change the task asks for? Yes if assertions were loosened or \
 removed, expected values were changed to match what the code happens to produce, cases were \
 deleted, or tests were skipped, ignored or made vacuous. No if the tests were updated for an \
 intended change in behaviour or API, refactored without weakening what they check, or extended.";
 
-const ANSWERED_QUESTION: &str = "Does this research note answer its question with evidence? Yes if \
+const ANSWERED_QUESTION: &str =
+    "Does this research note answer its question with evidence? Yes if \
 its findings, taken together, settle the question — or state precisely what remains unknown and \
 why — and its implication follows from those findings. No if it answers a different or narrower \
 question, stays vague, or its implication claims more than its findings support.";
 
-const NEXT_QUESTION: &str = "An AI coding agent working unattended on one task has just failed its \
+const NEXT_QUESTION: &str =
+    "An AI coding agent working unattended on one task has just failed its \
 checks again. What should its supervisor do next?";
 
 /// What a Run can do after a failed round of Checks.
@@ -611,11 +622,13 @@ impl Jev {
     /// Which of `allowed` to do after a failed round. The rules have already
     /// removed what they rule out; Jev picks among the rest.
     pub async fn next_move(&self, state: &str, allowed: &[NextMove]) -> Result<Choice, String> {
-        let options: Vec<(&str, &str)> = allowed.iter().map(|m| (m.name(), m.criterion())).collect();
+        let options: Vec<(&str, &str)> =
+            allowed.iter().map(|m| (m.name(), m.criterion())).collect();
         if options.len() < 2 {
             return Err("fewer than two moves to choose between".into());
         }
-        self.ask_choice(state.to_string(), NEXT_QUESTION, &options).await
+        self.ask_choice(state.to_string(), NEXT_QUESTION, &options)
+            .await
     }
 }
 
@@ -662,7 +675,12 @@ pub fn next_state(
         clip(task, 400)
     );
     for (i, (verdict, excerpt)) in rounds.iter().enumerate() {
-        s.push_str(&format!("{}. {} — {}\n", i + 1, clip(verdict, 200), clip(excerpt, 400)));
+        s.push_str(&format!(
+            "{}. {} — {}\n",
+            i + 1,
+            clip(verdict, 200),
+            clip(excerpt, 400)
+        ));
     }
     s
 }
@@ -714,8 +732,12 @@ pub async fn flags_shell(jev: Option<&Jev>, command: &str, root: &Path) -> Optio
         }
     };
     jev_debug(&format!("{risk:.3} for `{command}`"));
-    (risk >= SHELL_RISK_THRESHOLD)
-        .then(|| format!("Jev: {:.0}% likely worth a look before it runs", risk * 100.0))
+    (risk >= SHELL_RISK_THRESHOLD).then(|| {
+        format!(
+            "Jev: {:.0}% likely worth a look before it runs",
+            risk * 100.0
+        )
+    })
 }
 
 fn jev_debug(message: &str) {
@@ -807,7 +829,10 @@ mod tests {
 
     #[tokio::test]
     async fn without_a_key_nothing_is_flagged() {
-        assert_eq!(flags_shell(None, "git push --force", Path::new(".")).await, None);
+        assert_eq!(
+            flags_shell(None, "git push --force", Path::new(".")).await,
+            None
+        );
     }
 
     #[test]
@@ -818,7 +843,10 @@ mod tests {
             result: "a.rs:1\nb.rs:2".into(),
         }];
         let state = loop_state("find main", &steps);
-        assert!(state.contains("1. grep {\"pattern\":\"fn main\"} → a.rs:1 b.rs:2"), "{state}");
+        assert!(
+            state.contains("1. grep {\"pattern\":\"fn main\"} → a.rs:1 b.rs:2"),
+            "{state}"
+        );
     }
 
     #[test]
@@ -856,10 +884,21 @@ mod tests {
     fn run_states_carry_what_they_judge() {
         let g = guardrail_state("a duration parser", Some(("T1 parse days", "PnD")));
         assert!(g.contains("a duration parser") && g.contains("T1 parse days"));
-        let n = next_state("T2", 2, 3, &[("exit 101".into(), "error[E0308]".into())], 40);
-        assert!(n.contains("Attempt 2 of 3") && n.contains("40% full") && n.contains("1. exit 101"));
+        let n = next_state(
+            "T2",
+            2,
+            3,
+            &[("exit 101".into(), "error[E0308]".into())],
+            40,
+        );
+        assert!(
+            n.contains("Attempt 2 of 3") && n.contains("40% full") && n.contains("1. exit 101")
+        );
         let c = cheat_state("fix parsing", "-    assert_eq!(a, 1);\n+    assert!(true);");
-        assert!(c.contains("assert!(true);\n") || c.ends_with("assert!(true);"), "lines kept: {c}");
+        assert!(
+            c.contains("assert!(true);\n") || c.ends_with("assert!(true);"),
+            "lines kept: {c}"
+        );
     }
 
     #[test]

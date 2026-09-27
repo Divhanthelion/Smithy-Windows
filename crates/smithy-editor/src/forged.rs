@@ -187,11 +187,29 @@ pub fn forged_frame(aesthetic: RwSignal<Aesthetic>, tick: RwSignal<u64>) -> impl
             if run_bottom - run_top > clearance * 2.0 + 120.0 {
                 // Grown *out of* the medallion: the leaves rake toward the
                 // run's end, so the growth reads from the centre outward.
-                draw_vine(cx, Point::new(x, middle - clearance), Point::new(x, run_top), side_band, 1);
-                draw_vine(cx, Point::new(x, middle + clearance), Point::new(x, run_bottom), side_band, 0);
+                draw_vine(
+                    cx,
+                    Point::new(x, middle - clearance),
+                    Point::new(x, run_top),
+                    side_band,
+                    1,
+                );
+                draw_vine(
+                    cx,
+                    Point::new(x, middle + clearance),
+                    Point::new(x, run_bottom),
+                    side_band,
+                    0,
+                );
                 draw_medallion(cx, Point::new(x, middle));
             } else {
-                draw_vine(cx, Point::new(x, run_top), Point::new(x, run_bottom), side_band, 1);
+                draw_vine(
+                    cx,
+                    Point::new(x, run_top),
+                    Point::new(x, run_bottom),
+                    side_band,
+                    1,
+                );
             }
         }
 
@@ -570,10 +588,7 @@ fn draw_rope(cx: &mut floem::context::PaintCx, w: f64, h: f64) {
         }
         let along = ((to.x - from.x) / len, (to.y - from.y) / len);
         // The strand's long axis: along the rail and across it, at about 55°.
-        let slant = (
-            along.0 * 0.57 + n.0 * 0.82,
-            along.1 * 0.57 + n.1 * 0.82,
-        );
+        let slant = (along.0 * 0.57 + n.0 * 0.82, along.1 * 0.57 + n.1 * 0.82);
         let angle = slant.1.atan2(slant.0);
         let pitch = half * 0.95;
         let count = (len / pitch).floor() as usize;
@@ -628,12 +643,21 @@ fn draw_medallion(cx: &mut floem::context::PaintCx, c: Point) {
     let r = FRAME_INSET as f64 * 0.12;
     for (dx, dy) in [(0.0, -1.0), (0.0, 1.0)] {
         let from = Point::new(c.x + dx * r * 2.2, c.y + dy * r * 2.2);
-        let curl = springing_spiral(from, (dx, dy), r * 0.9, VOLUTE_DECAY, std::f64::consts::TAU * 0.7 * dy);
+        let curl = springing_spiral(
+            from,
+            (dx, dy),
+            r * 0.9,
+            VOLUTE_DECAY,
+            std::f64::consts::TAU * 0.7 * dy,
+        );
         inlay(cx, &curl, VOLUTE_INLAY * 0.8);
     }
     // Four lobes, then the stone set over their meeting.
     for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
-        let lobe = Circle::new(Point::new(c.x + dx * r * 0.95, c.y + dy * r * 0.95), r * 0.95);
+        let lobe = Circle::new(
+            Point::new(c.x + dx * r * 0.95, c.y + dy * r * 0.95),
+            r * 0.95,
+        );
         cx.fill(&lobe, INLAY_DEEP, 0.0);
         cx.stroke(&lobe, INLAY_MID, &Stroke::new(1.2));
     }
@@ -962,7 +986,8 @@ fn draw_corner(cx: &mut floem::context::PaintCx, w: f64, h: f64, corner: usize) 
     // the bezel covers their bases.
     let diagonal = std::f64::consts::FRAC_1_SQRT_2;
     let inward = (sx * diagonal, sy * diagonal);
-    let rotate = |(x, y): (f64, f64), a: f64| (x * a.cos() - y * a.sin(), x * a.sin() + y * a.cos());
+    let rotate =
+        |(x, y): (f64, f64), a: f64| (x * a.cos() - y * a.sin(), x * a.sin() + y * a.cos());
     let fan = FRAME_INSET as f64;
     for (dir, len, width) in [
         (inward, fan * 0.42, fan * 0.16),

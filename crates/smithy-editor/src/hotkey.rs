@@ -114,7 +114,11 @@ impl Hotkey {
                 out.push('⌥');
             }
         } else {
-            for (held, word) in [(self.cmd, "Ctrl+"), (self.shift, "Shift+"), (self.alt, "Alt+")] {
+            for (held, word) in [
+                (self.cmd, "Ctrl+"),
+                (self.shift, "Shift+"),
+                (self.alt, "Alt+"),
+            ] {
                 if held {
                     out.push_str(word);
                 }
