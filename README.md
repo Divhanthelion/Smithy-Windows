@@ -1,27 +1,43 @@
-# Smithy
+# Smithy for Windows
 
-**A native Rust IDE with a coding agent that runs on your own machine.**
+**A native Rust IDE and coding agent that runs on your own machine — with a
+second model watching the first, and Runs that work while you sleep.**
 
-Open a project, edit files, and ask an agent to do the work — against a model
-you host yourself. The model needs no API key and no network.
+Open a project, edit files, and ask an agent to do the work, against a model you
+host yourself: LM Studio, vLLM, or anything else that speaks the OpenAI API. The
+model needs no account and no network. This is a fork of
+[Smithy](https://github.com/Divhanthelion/Smithy-v1) that runs on **Windows** as
+well as macOS, and adds — above all — two things the original does not have:
 
-**This fork of [Smithy](https://github.com/Divhanthelion/Smithy-v1) is defined by [Jev](#jev-a-second-model-that-checks-the-first):**
-TypeSafe's fast decision model, wired into the agent loop as its reflexes. The
-agent writes the code; Jev answers the yes-or-no questions a careful developer
-would ask while watching — *is this command dangerous? is it going in circles?
-is it actually done? would building this hurt someone? did it just loosen a
-test to make it pass?* — in well under a second, with a probability instead of
-an opinion. That is what makes [unattended Runs](#unattended-runs) possible:
-one intent in, a branch of checked commits out, while nobody is watching.
+- **[Jev](#jev-a-second-model-that-checks-the-first)**, TypeSafe's fast
+  decision model, wired into the agent loop as its reflexes. The agent writes
+  the code; Jev answers the questions a careful developer asks while watching —
+  *is this command dangerous? is it going in circles? is it actually done?
+  would building this hurt someone? did it just loosen a test to make it
+  pass?* — in a fraction of a second, as a probability rather than an opinion.
+- **[Unattended Runs](#unattended-runs)**: one sentence in, a branch of
+  checked commits out. `smithy-agent run "…"` plans the work, researches what it
+  needs with sources you can check, builds it task by task, and commits only
+  what the compiler and the tests accept. Jev makes the judgment calls along
+  the way. You read the report in the morning.
+
+![Smithy showing a compiler-resolved call graph beside the agent panel](assets/smithy.png)
 
 The agent can read your code, search it, run commands and write files. Every
 write comes back as a diff you approve hunk by hunk, and every shell command
-waits for your go-ahead. Filesystem tools stay in the project you have open,
-plus a session scratch directory under the OS temp folder. Shell is a
-subprocess: it can leave that tree, and it waits unless you turn YOLO on for
-in-project commands.
+waits for your go-ahead unless you turn YOLO on.
 
-![Smithy showing a compiler-resolved call graph beside the agent panel](assets/smithy.png)
+---
+
+## What this fork adds
+
+| | |
+|---|---|
+| **Jev** | A second model at every step of every Session: a risky-command check under YOLO, loop detection, and a "really done?" check; in Runs, the intent guardrail, the test-weakening check and the next move. [How it works →](#jev-a-second-model-that-checks-the-first) |
+| **Unattended Runs** | `smithy-agent run` turns an intent into planned, researched, checked commits on their own branch, and writes a morning report. Resumable, detachable, never pushes. [How it works →](#unattended-runs) |
+| **Research you can check** | Every page the agent reads is saved by hash; `cite_check` confirms each quoted finding is really on the page it cites; Notes are kept in a library shared between Projects. |
+| **Windows** | The agent's shell is Git for Windows' bash, with a Job Object so a timeout kills the whole process tree. Windows paths, `USERPROFILE`, keys in Credential Manager, toast notifications, and a window that fits the screen at any scaling. |
+| **Measured, in the open** | [A field report](reports/2026-09-24-unattended-runs-on-the-thor.md) on five real Runs with a local model on a Jetson AGX Thor: the first finished one task of six in three and a half hours; the fourth finished everything in 53 minutes; the fifth, on a real project, wrote code that matched an outside reference (Hebcal) on all 13,991 days of Daf Yomi and 351 molad announcements checked. |
 
 ---
 
@@ -30,6 +46,19 @@ in-project commands.
 Most agent IDEs ask you to trust the agent. Smithy is built so you don't have
 to. Every distinctive thing in it exists to let you *check* something you would
 otherwise have to take on faith.
+
+**A second model checks the first.** A coding model is a poor judge of its own
+work: it loops without noticing, calls a half-finished job done, and will edit a
+failing test until it passes. Smithy asks [Jev](#jev-a-second-model-that-checks-the-first),
+a separate model built to return calibrated decisions, at the moments those
+mistakes happen. Jev can add caution — a prompt, a nudge, a stop — but it never
+approves anything on its own, and without it Smithy behaves exactly as it did
+before Jev existed.
+
+**Done means the tests say so.** In a Run, a task is finished when the runner
+has run its checks itself, nothing that passed before has broken, and no test
+that existed before was weakened, skipped or deleted to get there. The model's
+word counts for nothing, and neither does Jev's.
 
 **You can see what it is about to do.** Every `edit` and `write` opens as a diff
 and the agent's tool call *waits* for your decision, then hears the real outcome
@@ -48,20 +77,13 @@ it went.
 **The sandbox is a capability, not a path check.** Filesystem tools hold a
 `cap-std` directory handle for your project root, so the operating system itself
 refuses to let those reads and writes out — symlinks included. A second handle
-covers session scratch under the OS temp directory; `/tmp` itself is not open.
-There is no string comparison to outwit. Shell is different: `bash` is a subprocess, not a
-capability, and it does not run until a shell-approval hook is installed.
-With YOLO on, in-Project writes skip Review and commands that stay down in the Project skip the shell prompt;
-`cd ..` and paths outside the Project still ask. Environment names matching `*_API_KEY`, `*_TOKEN`, and `*_SECRET` are scrubbed
-from the child; `cd ..` out of the project remains possible.
-
-**A second model checks the first.** A coding model is a poor judge of its own
-work: it loops without noticing, calls a half-finished job done, and will edit a
-failing test until it passes. Smithy asks [Jev](#jev-a-second-model-that-checks-the-first),
-a separate model built to return calibrated decisions, at the moments those
-mistakes happen. Jev can add caution — a prompt, a nudge, a stop — but it never
-approves anything on its own, and without it Smithy behaves exactly as it did
-before Jev existed.
+covers session scratch under the OS temp directory. There is no string
+comparison to outwit. Shell is different: `bash` is a subprocess, not a
+capability, and it does not run until a shell-approval hook is installed. With
+YOLO on, in-Project writes skip Review and commands that stay in the Project
+skip the prompt, while `cd ..` and paths outside the Project still ask.
+Environment variables named `*_API_KEY`, `*_TOKEN` and `*_SECRET` are removed
+from the shell's environment.
 
 **The call graph is resolved by the compiler.** Edges come from rust-analyzer
 via SCIP, not from matching names. Name matching was tried first and measured:
@@ -69,34 +91,32 @@ it was right 55% of the time on this workspace, and it failed hardest on
 `new`, `default` and `run` — the most-called names in any codebase. A map that
 is confidently wrong about half your call sites is worse than no map.
 
-**The model is yours.** Point it at LM Studio and nothing leaves your machine;
-it keeps working with the network off. Point it at DeepSeek or OpenRouter if you
-would rather. Either way the editor is not a subscription and the code is not
-someone else's training data.
+**The model is yours.** Point it at LM Studio or a vLLM server and nothing
+leaves your machine; it keeps working with the network off. Point it at
+DeepSeek or OpenRouter if you would rather. Either way the editor is not a
+subscription and the code is not someone else's training data.
 
 **It leaves room for the model.** Smithy idles around **200 MB**. Measured on
 the same Mac at the same moment, Cursor's processes totalled **3.0 GB** and
-Claude's desktop app **2.2 GB**. That gap is not a benchmark boast — on Apple
-Silicon the memory is *unified*, so the editor, the operating system and your
-local LLM all draw from one pool. Whatever your editor is holding is weights you
-cannot load. On a 16 GB M-series machine, a three-gigabyte editor is the
-difference between running a 13B model and not running one.
+Claude's desktop app **2.2 GB**. On machines where the memory is *unified* —
+Apple Silicon, or a Jetson — the editor, the operating system and your local
+model all draw from one pool, and whatever your editor holds is weights you
+cannot load. On a 16 GB machine, a three-gigabyte editor is the difference
+between running a 13B model and not running one.
 
 **Dictation is built in, and local.** Hold a key and talk; `whisper-large-v3-turbo`
 runs in-process and the audio never leaves the machine. No separate app, no API
-call, no upload. It is the same bet as the rest of the editor — your hardware,
-your data — applied to the part of coding nobody wants to type.
+call, no upload.
 
-**Honestly, what it is not:** macOS only, and Apple Silicon is where it makes
-sense. The deep features — symbol index, call graph — are Rust; other languages
-get syntax highlighting, LSP and the agent, but not the map. Dictation costs
-what it saves: the editor is 200 MB until you load Whisper, and about 1.5 GB
-after, because the weights are held as f16 on the CPU. English only, in 30-second
-chunks with no overlap. Metal is out of scope. That is a known and fixable
-inefficiency rather than a floor — see
-[known gaps](#known-gaps). It is young, and that list is the real one, not a
-polite one. If you want the most mature agent IDE, it is not this. If you want
-one whose claims you can verify, that is the whole idea.
+**Honestly, what it is not:** Windows and macOS are where it runs; Linux
+builds are untested. The deep features — symbol index, call graph — are Rust;
+other languages get syntax highlighting, LSP and the agent, but not the map.
+Jev is the one piece that needs a hosted service and a key; everything else
+works offline. Dictation costs what it saves: about 1.5 GB once Whisper is
+loaded, English only, on the CPU (Apple's Accelerate on macOS, candle's own
+kernels on Windows). It is young, and the [known gaps](#known-gaps) list is the
+real one, not a polite one. If you want the most mature agent IDE, it is not
+this. If you want one whose claims you can verify, that is the whole idea.
 
 ---
 
@@ -183,18 +203,99 @@ checks switch on for every Session. `JEV_ENDPOINT`, `JEV_MODEL` and
 instead. An open model tried that way (Von 1.2) put 32 of the 63 cases on the
 wrong side, so it is not a drop-in replacement.
 
+## Unattended Runs
+
+```bash
+smithy-agent run "a library that parses ISO 8601 durations, with tests and a small CLI"
+```
+
+One intent in; a branch of checked commits out, while nobody is at the
+keyboard.
+
+**What happens.** Jev first asks whether the intent should be built at all.
+The Run then branches (`smithy/run-<id>`) from a clean tree and plans Tasks,
+each with the Checks — build, test, lint commands — that will decide it. It
+researches what the plan says it cannot get right from memory (a
+specification's exact rules, a file format, an API), saving every page it reads
+and verifying every quote, and then works the Tasks in order, up to three
+Attempts each. A Task is done when the runner has run its Checks itself, the
+full suite has not regressed from where it started, and tests that predate the
+Run were not weakened, skipped or deleted — not when the model says so. Each
+done Task is one commit. Nothing is pushed; git belongs to the runner, and the
+model's own `git commit` is refused.
+
+**Where Jev comes in.** It is asked, before anything is built and again for
+each Task, whether building it would be illegal or clearly harmful to others;
+a yes, or no answer at all, stops the Run and wakes you. It decides what to do
+after a failed round, judges whether changes to existing tests were cheating,
+and watches every Session for loops and false finishes. Every decision is
+logged with exactly what Jev was shown.
+
+**What you get.** A toast when it finishes, and `.smithy/runs/<id>/REPORT.md`:
+the verdict, what needs you, every Task with its checks and commit, why any
+blocked Task is blocked, the research Notes and how many of their findings
+verified, the commands it would have asked you about, and every decision. It
+stops at 8 hours (`--hours`), after two Tasks in a row are blocked, or when it
+needs you.
+
+**Running one.**
+
+| | |
+|---|---|
+| `smithy-agent run "INTENT"` | start a Run in the current Project (`--project PATH` for another) |
+| `--detach` | start it as a process of its own, so it survives the terminal or agent session that started it |
+| `--hours N`, `--attempts N`, `--research-minutes N` | ceilings |
+| `--slots N` | how many requests the model server takes at once; above 1, research runs side by side |
+| `smithy-agent run --resume [ID]` | carry on after a crash or a stop (an interrupted Attempt's work is stashed, never discarded); `--allow T3` clears a flag or gives a blocked Task fresh attempts |
+| `smithy-agent runs` | list this Project's Runs |
+
+Rust, CMake + ctest and pytest are detected; `.smithy/checks.toml` sets the
+commands for anything else, and the Run checks before it starts that every
+program those commands use (including cargo plugins like `cargo clippy`) is
+installed. The records committed to the Run's branch write paths relative to
+the Project and your home directory, so pushing one never publishes your user
+name. A Run needs a Jev key: without one, the guardrail cannot be asked and
+nothing is built.
+
+**How well it works.** From [the field report](reports/2026-09-24-unattended-runs-on-the-thor.md),
+all with a local model (Qwen3.8-Flash-Next) on a Jetson AGX Thor:
+
+| Run | Result | Time |
+|---|---|---|
+| 1st, ISO 8601 durations | 1 of 6 tasks; stopped by hand | 3 h 30 m |
+| 2nd, same intent, after fixing its ten causes | 3 of 3 | 2 h 23 m |
+| 3rd | 3 of 3 | 1 h 49 m |
+| 4th, faster weights, research side by side | 3 of 3 | **53 m** |
+| 5th, a real project ([hebrew-calendar](https://github.com/Divhanthelion/hebrew-calendar)): the molad and Daf Yomi | 3 of 3; matched Hebcal on every one of 13,991 days and 351 molad announcements | 6¾ h of running |
+
+The report is candid about what went wrong in each — including what still
+needed a person — and what was changed because of it.
+
 ---
 
 ## Getting started
 
-You need [Rust](https://rustup.rs) and, for the agent,
-[LM Studio](https://lmstudio.ai) with a tool-capable model loaded.
+You need:
+
+- [Rust](https://rustup.rs). On Windows, the MSVC toolchain rustup installs by
+  default, which needs the Visual Studio Build Tools.
+- On Windows, [Git for Windows](https://git-scm.com/download/win): the agent's
+  shell is its bash, found beside `git` on your `PATH` (not WSL's `bash`).
+- For the agent, a model server with a tool-capable model loaded:
+  [LM Studio](https://lmstudio.ai), or any OpenAI-compatible server such as
+  vLLM (set its URL under Backend Settings). A hosted backend (DeepSeek,
+  OpenRouter) works too.
+- For [Jev](#turning-it-on), a Vercel AI Gateway key. Optional for the editor,
+  required for unattended Runs.
 
 ```bash
 git clone https://github.com/Divhanthelion/Smithy-Windows.git
 cd Smithy-Windows
-cargo run -p smithy -- ~/code/your-project
+cargo run --release -p smithy -- ~/code/your-project
 ```
+
+On Windows, give the project as a Windows path
+(`cargo run --release -p smithy -- C:\code\your-project`).
 
 That's it. After the first launch, a bare `cargo run -p smithy` reopens whatever
 you had open last.
@@ -239,6 +340,12 @@ Load any tool-capable model in LM Studio and start the server. Smithy checks at
 launch that the model is actually resident in memory, not merely downloaded, and
 tells you which if it isn't.
 
+Any other OpenAI-compatible server works through the same backend: point
+`LMSTUDIO_URL` (or the URL under Backend Settings) at its `/v1`, as this fork's
+Runs do with vLLM on a Jetson AGX Thor. If the server refuses `min_p` (vLLM
+does when speculative decoding is on), Smithy stops sending it to that server
+and sends the request again.
+
 If the server wasn't running when Smithy started, the agent panel shows a red
 dot and a **Reconnect** button. Start the server, click it.
 
@@ -280,9 +387,9 @@ To see the same lists from a terminal:
 cargo run -p smithy-agent --example models -- openrouter
 ```
 
-API keys go to your OS credential store — Keychain on macOS — not to the settings
-file. They share one Keychain item, so opening the app asks for your login
-password at most once. The settings file holds the endpoint and model name only,
+API keys go to your OS credential store — Credential Manager on Windows,
+Keychain on macOS — not to the settings file. On macOS they share one Keychain
+item, so opening the app asks for your login password at most once. The settings file holds the endpoint and model name only,
 and the dialog never displays a stored key back to you.
 
 Environment variables still work and are still read; they're just no longer the
@@ -438,47 +545,6 @@ arrows move the highlight. `@path` on a command becomes an
 Attachment, same as drop. Click a budget-bar row (system prompt, map, tool
 JSON, conversation) or **last request** to see exactly what was sent.
 
-### Unattended runs
-
-```bash
-smithy-agent run "a library that parses ISO 8601 durations, with tests and a small CLI"
-```
-
-One intent in; a branch of checked commits out. The Run branches
-(`smithy/run-<id>`) from a clean tree, plans Tasks with the Checks that decide
-each one, and works them in order: research when a Task hinges on outside
-facts, then up to three Attempts per Task. A Task is done when the runner has
-run its Checks itself, the full suite has not regressed from where it started,
-and tests that predate the Run were not weakened, skipped or deleted — not when
-the model says so. Each done Task is a commit. Nothing is pushed; git belongs
-to the runner, and the model's own `git commit` is refused.
-
-Jev makes the judgment calls (whether to research, what to do after a failed
-round, whether test edits were cheating, whether research answered its
-question), each logged with exactly what it was shown so thresholds can be
-recalibrated against real runs. Before anything is built, Jev is asked whether
-the intent — and then each Task — is illegal or clearly harmful to others; a
-yes, or no answer at all, stops the Run and wakes you.
-
-It stops at 8 hours, after two Tasks in a row are blocked, or when it needs
-you, and says so with a toast and `.smithy/runs/<id>/REPORT.md`: the verdict,
-what needs you, every Task with its checks and commit, why the blocked ones are
-blocked, research Notes and how many of their findings verified, commands it
-would have asked about, and every decision. `smithy-agent run --resume` picks up
-after a crash (an interrupted Attempt's work is stashed, never discarded);
-`smithy-agent runs` lists them. `--detach` starts the Run as a process of its
-own, so closing the terminal (or the agent session that started it) does not
-end it. Rust, CMake + ctest and pytest are detected; `.smithy/checks.toml`
-sets the commands for anything else, and the Run checks before it starts that
-every program those commands use (including `cargo clippy`-style plugins) is
-installed. The records on the Run's branch name paths relative to the Project
-and home directory, never with your user name.
-
-[`reports/2026-09-24-unattended-runs-on-the-thor.md`](reports/2026-09-24-unattended-runs-on-the-thor.md)
-is the field report: five real Runs on a Jetson AGX Thor with a local model,
-what broke, what was changed, and a real project checked against an outside
-reference.
-
 ### MCP
 
 Servers listed in `.smithy/mcp.json` (Project, then `~/.smithy/mcp.json`;
@@ -499,8 +565,12 @@ There is no marketplace and no `/mcp` Command.
 
 ### Reference setup
 
-This is what Smithy is developed against, if you want a known-good starting
-point:
+This fork's unattended Runs were developed against **Qwen3.8-Flash-Next**
+(NVFP4, FP8-hybrid side weights) served by vLLM on an NVIDIA Jetson AGX Thor,
+with prefix caching on and three request slots (`--slots 3`); the serving
+recipe is in Appendix B of the
+[field report](reports/2026-09-24-unattended-runs-on-the-thor.md). For the
+editor with LM Studio, the original project's known-good setup:
 
 | | |
 |---|---|
@@ -653,9 +723,9 @@ rest have no UI and are read every time.
 | `SMITHY_LSP_LIGHT=1` | off | trades real compiler diagnostics for rust-analyzer's largest memory saving |
 | `SMITHY_SKY_LAT` / `SMITHY_SKY_LON` | San Francisco | observer location for the Forged sky backdrop |
 
-Sessions and settings live under `~/.local/share/smithy`. That is the XDG data
-directory, used on macOS as well so a single path works everywhere the crates
-run. Conversations are per-project: `~/.local/share/smithy/projects/<project>/sessions/*.json`.
+Sessions and settings live under `~/.local/share/smithy` — on Windows,
+`%USERPROFILE%\.local\share\smithy`. That is the XDG data directory, used on
+every platform so a single path works everywhere the crates run. Conversations are per-project: `~/.local/share/smithy/projects/<project>/sessions/*.json`.
 
 The dictation hotkey is stored in `~/.local/share/smithy/voice-hotkey` as the
 string you'd type — `cmd+shift+v`, any order, any case. Edit it to rebind.
@@ -751,13 +821,23 @@ empty it is. If rust-analyzer isn't installed it names the fix; if nothing has
 analysed the project yet, it says that instead of claiming a clean bill of
 health.
 
+**On Windows, every shell command fails.** The agent's shell is Git for
+Windows' bash, found beside `git` on your `PATH`. Install Git for Windows, or
+put its `cmd` directory on `PATH`; WSL's `bash.exe` is deliberately not used.
+
+**A Run ends before it starts.** Read the first line it prints. It checks
+first that the model server answers, that there is a Jev key, and that every
+program its checks use is installed (`cargo clippy` included), and says which
+one is missing.
+
 **Stop doesn't stop it.** Stop takes effect between steps. A shell command
 waiting on your approval, or a long-running tool, finishes first.
 
 **The microphone button does nothing.** Run with `SMITHY_VOICE_DEBUG=1` — it
 reports which input device was chosen, how much audio was captured, and how long
-decoding took. On macOS, check microphone permission in System Settings; the
-button reports `no microphone` if it was refused.
+decoding took. On macOS, check microphone permission in System Settings; on
+Windows, Settings → Privacy & security → Microphone, including "Let desktop apps
+access your microphone". The button reports `no microphone` if it was refused.
 
 **Terminal shortcuts are being swallowed.** `⌃L`, `⌃B`, `⌃S` and `⌃O` are
 currently claimed as application shortcuts before the terminal sees them.
@@ -786,6 +866,15 @@ Honest list, short:
   roughly 400–600 MB. Until then, dictation is by far the most expensive thing
   in the editor.
 - Completions aren't implemented yet.
+- **Jev needs a network and a key.** Everything else in Smithy works offline;
+  without Jev the Session checks are simply off, and Runs will not start.
+- **The guardrail's must-stop side is uncalibrated.** Its thresholds were
+  measured on intents it must let through; the cases it must stop are scored
+  from a local file nobody has written yet.
+- **A Run does not survive a restart.** `--detach` keeps it alive when the
+  terminal closes, not when the machine reboots; `--resume` carries on.
+- **CI runs on macOS only.** Windows is built and tested by hand, and Linux has
+  not been tried.
 
 **Found something else?** Please open an issue — that's genuinely the most
 useful thing you can do here. Include what you were doing and, if it's the voice
@@ -802,20 +891,22 @@ cargo build --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Eight crates. `apps/smithy` is the binary; the rest are libraries:
+Two binaries — `apps/smithy`, the editor, and `apps/smithy-cli`, which is
+`smithy-agent`: the terminal Session and unattended Runs — and eight libraries:
 
 | crate | what it is |
 |---|---|
 | `smithy-editor` | the UI: panels, menus, syntax styling, LSP client, terminal, file browser |
-| `smithy-agent` | the agent loop, budgets, session persistence, backend selection, the `explore` sub-agent |
+| `smithy-agent` | the agent loop, budgets, session persistence, backend selection, the `explore` sub-agent, and Jev |
+| `smithy-run` | unattended Runs: plan, research, checks, cheat detection, state, git, the decision log and the report ([design](crates/smithy-run/DESIGN.md)) |
 | `smithy-tools` | the agent's tools and the capability sandbox |
 | `smithy-project` | project detection and context extraction |
 | `smithy-fisherman` | the figure on the bottom rail: his day, his poses, and the drawing |
 | `smithy-sky` | astronomy for the backdrop. No dependencies at all |
 | `smithy-voice` | microphone in, string out |
 
-`smithy-agent`, `smithy-tools`, `smithy-fisherman`, `smithy-sky` and
-`smithy-voice` have **no UI dependency**, so a different front-end would be a
+`smithy-agent`, `smithy-run`, `smithy-tools`, `smithy-fisherman`, `smithy-sky`
+and `smithy-voice` have **no UI dependency**, so a different front-end would be a
 new consumer of the same core rather than a rewrite.
 
 The sandbox for filesystem tools is a capability, not a path check: those tools
