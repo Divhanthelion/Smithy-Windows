@@ -1,8 +1,9 @@
 # Teaching a local model to work while we sleep
 
-*A field report on Smithy's unattended Runs: four real runs on a Jetson AGX
-Thor, what the first one broke, what it took for the rest to finish, and where
-the time goes. 23–25 September 2026.*
+*A field report on Smithy's unattended Runs: four trial runs and one real
+project on a Jetson AGX Thor, what the first one broke, what it took for the
+rest to finish, where the time goes, and whether the result was right.
+23–25 September 2026.*
 
 ---
 
@@ -164,6 +165,63 @@ prints its usage instead of saying the duration is invalid — an edge case none
 of its 26 tests thought to check. And we can't yet say how much of the gain was
 the faster model and how much the better research; this run changed both.
 
+## A real project
+
+The duration library was a toy we had now built four times. It proved the
+machinery, not that the machinery was useful. So we pointed Smithy at one of
+our own projects — a Hebrew calendar in Rust, a library plus a desktop app —
+and asked for two features someone who keeps that calendar would actually
+want: the *molad*, the moment of the new moon announced in synagogue before
+each month, and *Daf Yomi*, the page of Talmud studied worldwide each day in a
+cycle that began in 1923. Both are easy to get almost right. A day off in 1975
+or an hour off in one month looks fine, and no existing test knows the
+answers.
+
+We went in suspecting the project wasn't in great shape, so before judging the
+run we checked where it started, against Hebcal — the calendar most Jewish
+calendar software is checked against. The suspicion was half right. The core
+was sound: every Hebrew date, holiday and weekly Torah portion across 21 years
+matched. Around it things were rougher. The prayer times are calculated to
+within a minute and then shown in the wrong time zone — UTC in the app, and an
+hour off all summer even where a zone is set. The app's default build fails on
+Windows, and its release build ships an older copy of its own interface. The
+run was told to leave the app alone, and it did.
+
+**It finished: three of three tasks, every check passing — and the result is
+right.** Across 13,991 days of Daf Yomi between 1923 and 2040 and 351 molad
+announcements between 2009 and 2040, it disagrees with Hebcal on none. It
+built the molad on the calendar's existing new-moon arithmetic, as asked,
+rather than writing a second copy, and nothing that worked before changed:
+41,030 days from 1923 to 2035 give the same dates, holidays and portions
+after the run as before it.
+
+It was not an overnight run. It took sixteen hours on the clock and about six
+and three-quarters of running. Planning took 78 minutes, against ten for the
+toy, because the planner went and did its own research instead of asking for
+it. The rest of the gap was ours and the hardware's. A laptop restart killed
+the run, which had been started from the session that was driving it, so we
+moved it onto the Thor itself. In its first half-hour there, three bugs in
+Smithy stopped it, one after another. Three research conversations hitting the
+server at once triggered a race. The shell guard refused a scratch directory,
+so the model wrote a probe file into the source tree. Then it wasn't allowed
+to delete the file. Each was fixed, and the run resumed. Then the Thor began
+tripping its over-current alarm, hundreds of times an hour at full power. We
+stopped for the afternoon, and the fix was a lower power mode: at 90 watts,
+three hours of generation tripped it zero times. The last task
+spent forty minutes trying to install a lint tool its checks needed and the
+machine didn't have, and was refused each time. Smithy should have caught
+that before the run started.
+
+The work itself was harder, and you can see it. While building, 84–91% of
+what the model wrote was thinking, against about half on the fourth run, and
+two tasks each spent a whole attempt designing before a single test ran.
+
+One flaw turned up in checking that no test could have caught. A comment in
+the Daf Yomi code says its dates drift from the published ones by a few days
+in the 1980s, so it deliberately leaves those years untested. Hebcal agrees
+with the code, not the comment — and the comment gets its own arithmetic
+wrong. The next person to read it would believe it.
+
 ## What it is, honestly
 
 A local model on a Thor writes code at 30–45 tokens a second. Work a hosted
@@ -174,18 +232,22 @@ it run unattended.
 
 The first run took three and a half hours to finish one task of six. The
 fourth finished everything in under an hour, on the same machine, unattended.
-The bar hasn't moved: done while we sleep, and a report the next morning we
-can believe.
+The real project finished too, with code that is right on every date we could
+check against an outside reference, though it needed a person six times to
+get there, and never once for the code. The bar hasn't moved: done while we
+sleep, and a report the next morning we can believe. The second half held up
+because of the checks. What still stands between us and the first half is
+everything around the model.
 
 ---
 ---
 
 # Technical report
 
-**Period:** 2026-09-23 17:36 UTC – 2026-09-25 07:10 UTC
-**Repository:** `Smithy-Windows` (private GitHub), 35 commits from `736e89a`
-to the commit carrying this report, 549 tests passing (smithy-agent 270 + 28
-integration, smithy-tools 157 + 7, smithy-run 62 + 16 end-to-end, smithy-cli
+**Period:** 2026-09-23 17:36 UTC – 2026-09-25 23:25 UTC
+**Repository:** `Smithy-Windows` (private GitHub), 41 commits from `736e89a`
+to the commit carrying this report, 555 tests passing (smithy-agent 271 + 28
+integration, smithy-tools 158 + 7, smithy-run 66 + 16 end-to-end, smithy-cli
 9).
 **Hardware:** NVIDIA Jetson AGX Thor, 128 GB unified memory (122.8 GiB
 visible), JetPack 7.1 / L4T R38, 1 TB NVMe; Windows 11 laptop as the
@@ -222,6 +284,14 @@ September) via vLLM on the Thor; Jev
 - **Fourth real Run finished in 53 minutes** with all of it: 3 of 3 tasks,
   research 9 minutes instead of 37, thinking down from 76% to 54% of what the
   model wrote (§10).
+- **A real project** (§11): molad and Daf Yomi for `hebrew-calendar`, 3 of 3
+  Tasks. Checked against Hebcal: 0 differences in 13,991 days of Daf Yomi
+  (1923–2040) and 351 molad announcements, and 0 regressions over 41,030 days.
+  16 h 18 min of clock for ~6 h 45 min of running: six human interventions,
+  none about the code (a laptop restart, three Smithy bugs fixed that hour, the
+  Thor's over-current throttling at MAXN — gone at 90 W — and a missing
+  `clippy`). The project it started from had sound calendar arithmetic but
+  zmanim in the wrong time zone and an app that doesn't build on Windows.
 - **Thor re-served** with a tuned vLLM recipe: prefix caching works and is
   now reported per request (93% of a 16k prompt; time to first token 9.05 s →
   1.0 s), 8 GiB fixed KV cache (292k tokens), 28–46 tok/s decode on the
@@ -546,6 +616,23 @@ results. What remains:
    Python's `//` inside a heredoc fed to `python` is still refused as a path.
    Acceptable while the model has the `write` tool and other ways round.
 
+From the real project (§11):
+
+6. **Preflight should run the checks' tools.** It confirms `cargo` exists but
+   not `cargo clippy`; T3 spent 42 minutes finding out.
+7. **The planner researches.** 78 minutes, 18 web calls of its own, a
+   60-minute turn limit reached. The plan should ask research questions,
+   not answer them.
+8. **Run records name local paths.** The branch's `.smithy/runs/` files carry
+   absolute paths with user names; on a public repository that leaks. Paths
+   relative to the Project and the log root, or records kept off the branch.
+9. **A Run should survive the session that starts it.** It died with the
+   laptop's Claude Code session; the Thor launcher (`setsid nohup`) is the
+   pattern.
+10. **Checks cannot see a wrong reason not to test.** The Daf Yomi comment
+    that excused cycles 8–9 from testing was wrong. A reviewer pass against an
+    outside reference, where one exists, is worth considering.
+
 ## 9. Follow-up (24 September, evening)
 
 The open items, worked after an OS update and reboot of the Thor.
@@ -794,6 +881,175 @@ research nothing. The finished CLI gives `0.5` for `PT0.5S`, `275400` for
 reasons; it prints its usage for `-P1D`, reading the minus sign as an option —
 a real edge case none of the 26 tests covers.
 
+## 11. A real project: hebrew-calendar (25 September)
+
+The first Run against an existing codebase instead of a fresh toy: run
+`20260925-0707-82d4` on `hebrew-calendar` (a public GitHub repository: Rust
+library `hebrew_core`, Tauri v1 + Axum app `hebrew_app`). **Done — every
+Task's Checks pass**, 3 of 3 Tasks, 07:07–23:25 UTC.
+
+### 11.1 The intent
+
+> Add two features to hebrew_core, the calendar library crate (leave
+> hebrew_app and src-tauri alone): 1. The molad of any Hebrew month […] as it
+> is announced on Shabbat Mevarchim, built on the crate's existing
+> molad-of-Tishrei arithmetic rather than a second implementation. 2. The Daf
+> Yomi of any Gregorian date […] in the cycle that began on 11 September 1923,
+> including every change to the cycle's length since then (such as
+> Shekalim's). Both need unit tests that check against published values […]
+> and both should be reachable through the crate's public API.
+
+One preparation commit (`ae4b7c1`) added `.smithy/checks.toml` restricting
+build, test and lint to `-p hebrew_core`, since the GUI crate cannot build
+headless on the Thor.
+
+### 11.2 The project as it stood (`5ca089e`)
+
+About 6,100 lines: `hebrew_core` (calendar 761, holidays 1,024, parsha 553,
+zmanim 545, lib 276) with 102 tests, and `hebrew_app` (~1,000 lines of Rust
+and two frontends). Assessed against Hebcal's API (diaspora settings) with a
+scratch harness that prints the library's answer for every day:
+
+| Area | Checked | Result |
+|---|---|---|
+| Gregorian → Hebrew date | 7,670 days, 2015–2035 | 0 differences |
+| Holidays the library knows (45 kinds, diaspora) | every occurrence 2015–2035 | 0 differences |
+| Weekly portion | 1,096 Shabbatot | 0 differences in naming a portion; the 73 holiday Shabbatot are labelled "Haftarah Only" where the holiday's own reading applies |
+| Zmanim (sunrise, sunset, dawn, nightfall, chatzot, latest Shema ×2) | Jerusalem and New York, 24 dates in 2025 | within 1 minute as instants; **60 minutes off on the clock** under daylight time |
+
+So the calendar arithmetic was sound. The problems were elsewhere:
+
+- **Zmanim are printed in the wrong zone.** `GeoLocation` carries one fixed
+  offset (the presets say "UTC+2 (standard), +3 in summer" and apply +2 all
+  year). `GeoLocation::new` defaults it to 0; the API's `/zmanim` and
+  `/convert` never set it, and the GUI sets `with_timezone(0) // UTC for
+  now`. A New York user asking the API for sunrise gets a UTC time labelled
+  as nothing.
+- **The app.** The default build (`gui` + `server`) fails on Windows:
+  `icons/icon.ico not found` (the icon set lives in the leftover `src-tauri/`).
+  `tauri.conf.json` serves `frontend/` in development (1,247 lines) and
+  `frontend/dist/` in release (454 lines, an older copy). Tauri v1 with
+  `api-all`. The API crate's 13 tests pass (`--no-default-features
+  --features server`).
+- **Limits and errors.** `calculate_day`, which the app goes through, refuses
+  dates after 2050 although the conversion is good well beyond. The
+  `DateOutOfRange` error's text is hard-coded as "(0 AD to 2050 AD)", so any
+  other use of it reads wrongly.
+- **Scope.** Diaspora only (no Israel mode for holidays or portions); no Erev
+  days, special Shabbatot, Pesach Sheni, Purim Katan and other minor days.
+- **Tests and hygiene.** `test_year_zero_boundary` prints and asserts nothing;
+  the zmanim tests accept sunrise anywhere between 3 and 8 am. CI tests
+  `hebrew_core` only. Five clippy warnings, which the `lint` check does not
+  fail on (no `-D warnings`). `format_display_date` gives "3 15, 2024 AD".
+
+### 11.3 What the Run produced
+
+`e7984a2` T1 molad (`molad.rs` 335 lines + 253 of tests), `d3d2ab9` T2 Daf
+Yomi (`daf_yomi.rs` 384 + 376), `2211b99` T3 public API (`lib.rs` +193). T1
+hoisted the molad-of-Tishrei parts arithmetic out of
+`hebrew_calendar_elapsed_days` into `DateConverter::molad_parts` (+42/−11 in
+`calendar.rs`) and built on it, as the intent asked. Tests: 102 → 131. Clippy
+warnings: 5 → 5 (T1 removed one old warning; the Run added none). Six research
+Notes (43 of 58 findings verified by `cite_check`).
+
+Checked against Hebcal:
+
+| | Checked | Differences |
+|---|---|---|
+| Daf Yomi | 13,991 days: 1923–24 (cycle 1's start), 1930, 1955, 1968–76 (the 2702→2711 change at cycle 8, June 1975), 1982, 1990, 1997, 2005, 2009–2040 | **0** |
+| Molad | 351 Shabbat Mevarchim announcements, 2009–2040: weekday, hour, minute, chalakim | **0** |
+| Molad Tishrei 5786 | Monday 22 Sep 2025, 12:10 pm + 7 chalakim; Rosh Hashanah on the Tuesday | as published |
+| Regression | Hebrew date, holidays and portion for all 41,030 days 1923–2035, before vs after | **0** |
+
+What the review found in the new code:
+
+- **A false "known imprecision".** `daf_yomi.rs` and its tests say the constant
+  2711-daf step "is 6 days early for cycles 8–9", citing published siyumim of
+  1982-11-21 and 1990-04-24 against the model's 1982-11-24 and 1990-04-27, and
+  so assert no cycle 8 or 9 end. Hebcal gives Niddah 73 on 1982-11-24 and
+  1990-04-27, as the module does. The comment's own numbers are three days
+  *before* the model's, not six after. I could not settle which siyum dates
+  its source meant; a maintainer reading it would believe the code is wrong.
+- **The pre-1923 error** reuses `DateOutOfRange`, so it renders as "Date out
+  of supported range (0 AD to 2050 AD): Daf Yomi cycle 1 began on
+  11 September 1923; …".
+- Otherwise the modules are careful: conventions stated at the top (raw mean
+  conjunction, no dehiyyot, Jerusalem mean time, noon-based remainder),
+  constants named, the four small Kodashim tractates' shared folio numbering
+  handled by walk index, `Molad::parts_since_epoch` as an inverse with tests.
+  Neither feature appears in the app (`DailyData`), as the intent asked.
+- **The branch carries the Run's records** (`.smithy/runs/…`: `REPORT.md`,
+  `decisions.jsonl`, `state.json`, ~3,000 lines) and they contain absolute
+  paths with the laptop's and the Thor's user names. The repository is public;
+  the branch should not be merged as it stands.
+
+### 11.4 Timeline
+
+| UTC | Event |
+|---|---|
+| 07:07 | Started on the laptop, from the Claude Code session. Planning. |
+| 08:12 | Planner's turn hits its 60-minute limit; plan written at 08:25 (3 Tasks, 6 questions). |
+| 08:25–08:59 | Research, three at a time: T1's three questions (20 min), then T2's. |
+| 08:59 | **Stopped: laptop restarted**; the Run was a child of the session. Moved to the Thor, launched detached (`setsid nohup`); resume learned to take a log directory from another machine and new ceilings (`57fced1`). |
+| 12:12 | Resumed on the Thor; T2's research. |
+| 12:18 | **Stopped: HTTP 400** "min_p … not yet supported with speculative decoding" on all three concurrent sessions. The per-provider "don't send min_p" flag was only honoured by the first request to be refused; the others retried with it (`95dadcd`, with a test against a local server that fails on the old code). |
+| 12:23 | Resumed. |
+| 12:29–12:32 | T1 attempt 1: the shell guard refused a scratch directory, the model put a probe file in `src/`, Jev (68–80%) held back `rm` of it, and the loop stopped. The failure question then quoted "Compiling hebrew_core…" rather than the error. **Stopped by hand**; `c9b8cdd`: a per-Run scratch directory the guard allows, deleting files the session itself wrote needs no review, the failure question quotes the first error line. |
+| 12:39–14:37 | T1 attempts 2 and 3: five 20-minute turns without a passing check, then green after 18 tool calls. **T1 done.** |
+| 14:37 | **Stopped by hand** at T2's start: the Thor's over-current alarm (`soctherm` oc3) had counted 824 in the first hour at MAXN and 1,261 by now. Moved room and outlet; replaced a flaky Ethernet cable; the direct link's DHCP (no server on that cable) was dropping the link and was set to a static address. |
+| 20:00 | Resumed, still at MAXN: oc3 1 → 85 → 99 within minutes of generation. |
+| 20:12 | **Stopped by hand** to change the power mode. The reboot into 90 W hung at "failed to transfer message -62 / failed to read time"; the next cold boot was clean. |
+| 21:00 | Resumed at 90 W. T2 attempts 3 and 4. |
+| 22:24 | **T2 done.** |
+| 22:24–23:06 | T3 attempt 1: `cargo clippy` is not installed on the Thor. 42 minutes, 72 requests, 38 refused commands (`rustup component add clippy` and ways round it; all refused rightly). `clippy` installed by hand. |
+| 23:25 | T3 attempt 2 green after 32 tool calls. **Done.** oc3: 0 new events in ~3 h of generation at 90 W. |
+
+### 11.5 Where the time went
+
+Six starts, about 6 h 45 min of running (Smithy's report charges 6 h 15 min
+against the 24-hour budget) in 16 h 18 min of clock. From the two event logs:
+
+| Phase | Requests | Model time | Generated | Thinking |
+|---|---|---|---|---|
+| Planning | 43 | 77.5 min | 196k | 92% |
+| Research (6 questions, some twice across the restarts) | 222 | 73 min, three at a time | 129k | 45% (lookups 0%) |
+| T1 (3 attempts) | 85 | 120 min | 302k | 91% |
+| T2 (4 attempts) | 95 | 92 min | 230k | 84% |
+| T3 (2 attempts) | 104 | 59 min | 124k | 87% |
+| **Total** | **549** | **~7 h** (research overlapped) | **~980k** | **~83%** |
+
+Smithy's own report counts 458 requests and 16.1 M prompt tokens (92% from
+cache); the logs include sessions cut off by the stops. Checks took seconds.
+
+Against the fourth trial Run (53 minutes, 125k tokens, 54% thinking), the
+difference is mostly the work: building thought 84–91% of the time, T1 and
+T2 each spent a whole attempt designing across 20-minute turns without a
+single passing check, and contexts passed Smithy's 32k warning. Planning is
+the outlier: 78 minutes against 10. The planner made 18 web calls of its own
+(15 fetches, 3 searches) and 25 shell commands, when research is the Run's job
+after the plan.
+
+### 11.6 Jev and the rules
+
+515 decisions: 464 loop checks (451 continue, 9 nudges, 4 stops), 17
+guardrail (all build), 11 next-step (10 later shown right, none wrong), 11
+research reports, 6 each of done and answered. 88 refused commands; the
+largest groups were writes outside `.smithy/research/` before `c9b8cdd` and
+T3's 38 attempts to install clippy. No refusal cost correct work; the scratch
+directory's absence did, until fixed.
+
+### 11.7 What it showed
+
+- **The order of authority held on real work.** Every commit on the branch
+  was earned by the runner's checks, and the result is right on every date
+  an independent reference could check, including history the tests
+  deliberately skip (cycles 8–9). Nothing that passed before was weakened.
+- **The unattended part did not.** Six human interventions, none about the
+  code: one launch mistake (process tree), three Smithy bugs (all fixed the
+  same hour), one hardware limit (MAXN), one missing tool.
+- **Where the checks' blind spot is:** a confident, wrong comment that
+  justified *not* testing something. Only an outside reference caught it.
+
 ## Appendix A. Commits
 
 ```
@@ -831,16 +1087,24 @@ aa08fd8 Shell guard: a heredoc that only writes a file is data; report run 3
 0a9b962 Research: side by side, done when done, shared between Projects
 811ea1e Research: a lookup does not think; a decision does
 7fbf53d Report: where the time goes, and what was changed because of it
+27c69ff Report: the fourth Run — 53 minutes, measured
+85cf5df Scrub LAN addresses and a local username from the repo
+f1d2be2 Report and DESIGN: the guardrail's stop side is uncalibrated
+57fced1 Resume: new ceilings, and a log directory from another machine
+95dadcd LM Studio provider: every request refused for min_p retries, not only the first
+c9b8cdd Runs: a scratch directory the shell allows, and deleting what you made
 ```
 
 ## Appendix B. Thor state
 
 | | |
 |---|---|
-| Addresses | one from the router by DHCP, plus the static address from the direct laptop link (kept) |
+| Addresses | Wi-Fi from the router (internet); the direct laptop link static only, DHCP off (it timed out on a cable with no DHCP server and dropped the link, 25 Sep) |
+| Power mode | 90W (mode 2) since 25 Sep; MAXN tripped `soctherm` oc3 hundreds of times an hour under inference |
+| Runs | launched detached with `~/thor-setup/smithy-run.sh` (keys from `~/.config/smithy/keys.env`, mode 600); logs in `~/thor-setup/runs/` |
 | SSH | key `~/.ssh/id_ed25519_thor` (laptop), alias `thor` |
 | User | a regular account in the `docker` group |
-| Rust | 1.98.1 (rustup, user-local) |
+| Rust | 1.98.1 (rustup, user-local), with `clippy` since 25 Sep |
 | Server | container `flash-next`, port 8000, detached |
 | Start command | `~/thor-setup/start-flash-next.sh`: the recipe's `serving/start-qwen38-flash-next-fast.sh` with the FP8-hybrid snapshot `7b719225…-fp8hybrid` (`FLASHNEXT_MODEL_REV` selects the base), port 8000, three slots (run Smithy with `--slots 3`), 256k, detached, `--enable-prompt-tokens-details`, and an 8 GiB KV cache (`FLASHNEXT_KV_GIB`). `FLASHNEXT_NO_RM=1` keeps a failed container's logs. Clear caches first if `free -g` shows memory held. |
 | Caches | `~/thor-hf-cache` (HF home, token file), `~/thor-vllm-cache`, `~/thor-torch-cache`, `~/thor-flashinfer-cache` |
