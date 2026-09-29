@@ -7,12 +7,16 @@
 //! What a press *means* is [`smithy_voice::press`], a pure function tested
 //! without a microphone. What it *does* is here, because that is where the
 //! channels and the signals live.
+//!
+//! Dictation is live: the words appear in the prompt as they are said, and a
+//! pause ends it — the microphone closes by itself. Pressing again closes it
+//! early.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate};
-use smithy_voice::audio::{AudioRecorder, RecordingHandle};
+use smithy_voice::audio::{AudioRecorder, LiveHandle};
 use smithy_voice::inference::{Event, Transcriber};
 use smithy_voice::{press, Press, Voice};
 
@@ -22,16 +26,16 @@ use smithy_voice::{press, Press, Voice};
 /// `AudioRecorder::new()` at launch and kept for the life of the process, which
 /// meant the input device was whatever existed at startup. Connect AirPods
 /// afterwards and they were never found — the only cure was relaunching the
-/// editor. Worse, a machine with no device at launch got `None` back from
-/// `new`, so the whole control never existed and the button was dead for the
-/// session even after something was plugged in. `smithy_voice::press` already
-/// maps `Failed` back to `LoadModel`; there was simply nothing left to press.
+/// editor. The device is found at the press that opens it.
 pub struct VoiceControl {
     transcriber: Transcriber,
-    /// Live only while recording. Held here because stopping consumes it and a
-    /// press is a different call from the one that started it.
-    recording: RefCell<Option<RecordingHandle>>,
+    /// Open only while dictating; dropping it closes the microphone.
+    microphone: Rc<RefCell<Option<LiveHandle>>>,
+    /// What the prompt held when this dictation began. The live text is shown
+    /// after it and replaced as it changes, so nothing typed is lost.
+    before: Rc<RefCell<String>>,
     state: RwSignal<Voice>,
+    input: RwSignal<String>,
 }
 
 impl VoiceControl {
@@ -39,36 +43,47 @@ impl VoiceControl {
     ///
     /// The thread is spawned now and the *model* is not — nothing is fetched
     /// until the first press, so a launch costs a thread and nothing else.
-    ///
-    /// Infallible: it no longer touches audio hardware, so there is nothing
-    /// here to fail. The device is found at the press that needs it.
     pub fn new(state: RwSignal<Voice>, input: RwSignal<String>) -> Rc<Self> {
         let (tx, rx) = crossbeam_channel::unbounded::<Event>();
         let (tick, inbox) = crate::app_state::bridge(rx);
+        let microphone: Rc<RefCell<Option<LiveHandle>>> = Rc::new(RefCell::new(None));
+        let before = Rc::new(RefCell::new(String::new()));
 
-        floem::reactive::Effect::new(move |_| {
-            tick.get();
-            for event in crate::app_state::drain(&inbox) {
-                match event {
-                    Event::Loaded => state.set(Voice::Ready),
-                    Event::Transcribed(text) => {
-                        // Appended rather than replacing: dictation is
-                        // additive, and there is no undo on a text box somebody
-                        // is mid-thought in.
-                        input.update(|existing| {
-                            *existing = smithy_voice::append(existing, &text);
-                        });
-                        state.set(Voice::Ready);
+        {
+            let microphone = Rc::clone(&microphone);
+            let before = Rc::clone(&before);
+            floem::reactive::Effect::new(move |_| {
+                tick.get();
+                for event in crate::app_state::drain(&inbox) {
+                    match event {
+                        Event::Loaded => state.set(Voice::Ready),
+                        // Shown as it is heard, after whatever was already
+                        // typed; each partial replaces the last.
+                        Event::Partial(text) => {
+                            input.set(smithy_voice::append(&before.borrow(), &text));
+                        }
+                        // The dictation is over, by a pause or by a press:
+                        // close the microphone and keep the final text.
+                        Event::Transcribed(text) => {
+                            microphone.borrow_mut().take();
+                            input.set(smithy_voice::append(&before.borrow(), &text));
+                            state.set(Voice::Ready);
+                        }
+                        Event::Failed(why) => {
+                            microphone.borrow_mut().take();
+                            state.set(Voice::Failed(why));
+                        }
                     }
-                    Event::Failed(why) => state.set(Voice::Failed(why)),
                 }
-            }
-        });
+            });
+        }
 
         Rc::new(Self {
             transcriber: Transcriber::new(tx),
-            recording: RefCell::new(None),
+            microphone,
+            before,
             state,
+            input,
         })
     }
 
@@ -79,11 +94,9 @@ impl VoiceControl {
                 self.state.set(Voice::Loading);
                 self.transcriber.load(smithy_voice::ModelConfig::default());
             }
-            // The device is resolved *here*, on the press that needs it, and
-            // dropped again immediately: `RecordingHandle` owns its stream, so
-            // the recorder is only the thing that built it. Enumeration costs
-            // milliseconds, and paying it per press is what lets a headset
-            // connected after launch actually be found.
+            // The device is resolved *here*, on the press that needs it:
+            // enumeration costs milliseconds, and paying it per press is what
+            // lets a headset connected after launch actually be found.
             //
             // **Not "no microphone".** This error covers every reason the input
             // device could not be opened — none selected, permission never
@@ -91,45 +104,31 @@ impl VoiceControl {
             // one cause it usually is *not* sends you looking at hardware. The
             // panel puts the detail under a hover.
             Press::StartRecording => {
-                match AudioRecorder::new().and_then(|recorder| recorder.start_recording()) {
+                *self.before.borrow_mut() = self.input.get_untracked();
+                let opened = AudioRecorder::new().and_then(|recorder| {
+                    let sink = self.transcriber.begin(recorder.sample_rate());
+                    recorder.start_streaming(sink)
+                });
+                match opened {
                     Ok(handle) => {
-                        *self.recording.borrow_mut() = Some(handle);
+                        *self.microphone.borrow_mut() = Some(handle);
                         self.state.set(Voice::Listening);
                     }
+                    // The recognizer may already have begun a dictation; it is
+                    // left to the next `begin` to replace. Finishing it would
+                    // send an empty result that turned this failure back into
+                    // `Ready` before anyone read it.
                     Err(e) => self
                         .state
                         .set(Voice::Failed(format!("microphone unavailable: {e}"))),
                 }
             }
+            // Closed by hand before a pause did it: the last words are
+            // finished on the recognizer's thread and arrive as `Transcribed`.
             Press::StopAndTranscribe => {
-                let Some(handle) = self.recording.borrow_mut().take() else {
-                    // Nothing was open. Fall back rather than wedging in a
-                    // state whose only exit was the recording that is missing.
-                    self.state.set(Voice::Ready);
-                    return;
-                };
-                match handle.stop() {
-                    Ok(audio) if audio.has_audio() => {
-                        // Resampled to 16 kHz mono here, not sent raw. The
-                        // microphone runs at whatever rate it likes — 48 kHz on
-                        // this machine — and the recognizer is fed 16 kHz mono.
-                        match audio.to_pcm_16khz() {
-                            Ok(pcm) => {
-                                self.state.set(Voice::Transcribing);
-                                self.transcriber.transcribe(pcm);
-                            }
-                            Err(e) => self
-                                .state
-                                .set(Voice::Failed(format!("could not prepare audio: {e}"))),
-                        }
-                    }
-                    // Silence is not an error and must not look like one — a
-                    // mis-press should cost nothing but the press.
-                    Ok(_) => self.state.set(Voice::Ready),
-                    Err(e) => self
-                        .state
-                        .set(Voice::Failed(format!("could not stop recording: {e}"))),
-                }
+                self.microphone.borrow_mut().take();
+                self.state.set(Voice::Transcribing);
+                self.transcriber.finish();
             }
             Press::Ignore => {}
         }

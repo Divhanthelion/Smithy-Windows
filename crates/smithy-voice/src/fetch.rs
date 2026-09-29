@@ -53,13 +53,14 @@ pub fn ensure(config: &ModelConfig) -> Result<()> {
 
 /// Stream `from` into `to`, returning the bytes written and their SHA-256.
 fn copy_hashed(from: &mut dyn Read, to: &Path) -> Result<(u64, String)> {
-    let mut file =
-        File::create(to).with_context(|| format!("could not write {}", to.display()))?;
+    let mut file = File::create(to).with_context(|| format!("could not write {}", to.display()))?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1 << 20];
     let mut total = 0u64;
     loop {
-        let n = from.read(&mut buf).context("the download was interrupted")?;
+        let n = from
+            .read(&mut buf)
+            .context("the download was interrupted")?;
         if n == 0 {
             break;
         }
@@ -75,7 +76,10 @@ fn copy_hashed(from: &mut dyn Read, to: &Path) -> Result<(u64, String)> {
 /// The downloaded archive is the one that was published, or it is deleted.
 fn check(part: &Path, (size, sha256): (u64, String), config: &ModelConfig) -> Result<()> {
     let problem = if size != config.size {
-        Some(format!("{size} bytes arrived, {} were expected", config.size))
+        Some(format!(
+            "{size} bytes arrived, {} were expected",
+            config.size
+        ))
     } else if !sha256.eq_ignore_ascii_case(&config.sha256) {
         Some(format!(
             "its SHA-256 is {sha256}, not the published {}",
@@ -177,7 +181,8 @@ mod tests {
                 header.set_size(data.len() as u64);
                 header.set_mode(0o644);
                 header.set_cksum();
-                tar.append_data(&mut header, format!("m/{name}"), data).unwrap();
+                tar.append_data(&mut header, format!("m/{name}"), data)
+                    .unwrap();
             }
             tar.into_inner().unwrap().finish().unwrap();
         }

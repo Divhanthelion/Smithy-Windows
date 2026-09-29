@@ -33,7 +33,10 @@ fn main() -> anyhow::Result<()> {
         let samples = if wave.sample_rate() == SAMPLE_RATE {
             wave.samples().to_vec()
         } else {
-            println!("{file}: {} Hz, skipped (the example only feeds 16 kHz)", wave.sample_rate());
+            println!(
+                "{file}: {} Hz, skipped (the example only feeds 16 kHz)",
+                wave.sample_rate()
+            );
             continue;
         };
         let seconds = samples.len() as f32 / SAMPLE_RATE as f32;

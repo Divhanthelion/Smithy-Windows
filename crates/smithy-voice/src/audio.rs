@@ -132,6 +132,90 @@ impl AudioRecorder {
     }
 }
 
+impl AudioRecorder {
+    /// The device's sample rate, which a streaming sink is fed at.
+    pub fn sample_rate(&self) -> u32 {
+        self.config.sample_rate.0
+    }
+
+    /// Open the microphone and hand each block to `sink` as it arrives, as
+    /// mono f32 at [`Self::sample_rate`]. Closing is dropping the handle.
+    ///
+    /// For live dictation: the recognizer hears the words while they are
+    /// being said, instead of a recording handed over at the end.
+    pub fn start_streaming<F>(&self, sink: F) -> Result<LiveHandle>
+    where
+        F: FnMut(&[f32]) + Send + 'static,
+    {
+        let channels = self.config.channels as usize;
+        let sink = Arc::new(Mutex::new(sink));
+        let err_fn = |err| crate::voice_debug!("Audio stream error: {}", err);
+        let stream = match self.sample_format {
+            SampleFormat::F32 => {
+                let sink = Arc::clone(&sink);
+                self.device.build_input_stream(
+                    &self.config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        deliver(&sink, &downmix(data.iter().copied(), channels));
+                    },
+                    err_fn,
+                    None,
+                )?
+            }
+            SampleFormat::I16 => {
+                let sink = Arc::clone(&sink);
+                self.device.build_input_stream(
+                    &self.config,
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        let floats = data.iter().map(|&s| s as f32 / 32768.0);
+                        deliver(&sink, &downmix(floats, channels));
+                    },
+                    err_fn,
+                    None,
+                )?
+            }
+            SampleFormat::U16 => {
+                let sink = Arc::clone(&sink);
+                self.device.build_input_stream(
+                    &self.config,
+                    move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                        let floats = data.iter().map(|&s| u16_to_i16(s) as f32 / 32768.0);
+                        deliver(&sink, &downmix(floats, channels));
+                    },
+                    err_fn,
+                    None,
+                )?
+            }
+            other => anyhow::bail!("Unsupported sample format: {other:?}"),
+        };
+        stream.play().context("Failed to start audio stream")?;
+        crate::voice_debug!("Listening at {} Hz", self.config.sample_rate.0);
+        Ok(LiveHandle { _stream: stream })
+    }
+}
+
+/// An open microphone feeding a sink. Dropping it closes the microphone.
+pub struct LiveHandle {
+    _stream: Stream,
+}
+
+fn deliver<F: FnMut(&[f32])>(sink: &Mutex<F>, block: &[f32]) {
+    if let Ok(mut sink) = sink.lock() {
+        sink(block);
+    }
+}
+
+/// Interleaved frames to mono, by averaging the channels of each frame.
+fn downmix(samples: impl Iterator<Item = f32>, channels: usize) -> Vec<f32> {
+    if channels <= 1 {
+        return samples.collect();
+    }
+    let all: Vec<f32> = samples.collect();
+    all.chunks(channels)
+        .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
+        .collect()
+}
+
 /// Handle to an active recording
 pub struct RecordingHandle {
     stream: Stream,
@@ -269,6 +353,16 @@ mod tests {
     #[test]
     fn a_recording_too_brief_to_be_speech_is_rejected() {
         assert!(!make_audio(vec![1000; 500]).has_audio());
+    }
+
+    /// A stereo microphone reaches the recognizer as one channel: interleaved
+    /// frames read as mono would play at double speed and sound like noise.
+    #[test]
+    fn stereo_is_averaged_into_one_channel() {
+        let stereo = [0.5, -0.5, 1.0, 0.0, 0.2, 0.2].into_iter();
+        assert_eq!(downmix(stereo, 2), vec![0.0, 0.5, 0.2]);
+        let mono = [0.1, 0.2].into_iter();
+        assert_eq!(downmix(mono, 1), vec![0.1, 0.2]);
     }
 
     /// And the negative control, without which the two above would pass on a
