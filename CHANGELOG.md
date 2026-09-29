@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Dictation: NVIDIA's Nemotron Speech Streaming 0.6B (int8) through sherpa-onnx replaces Whisper. The words appear as they are said and a 1.2 s pause ends the dictation; about 750 MB resident instead of 1.5 GB, and a 464 MB download checked against its published SHA-256. Measured on recordings only; not yet tried with a real microphone in the editor.
 - Filesystem tools also cover a session scratch directory (`$TMPDIR/smithy/<project>`), still via `cap-std` — not a path-string opening of `/tmp`. YOLO still Reviews scratch writes. A 1M-window Turn now gets 300 steps and 75 minutes; a 32k local model stays at 60 / 15 minutes.
 - MCP tools that may mutate remote state are now denied by default. Tools where the server declared `annotations.readOnlyHint = true` are allowed; all others are refused with an explanation. This matches the existing deny-by-default posture for `bash` and closes a gap where a mutating MCP tool (e.g. `github_create_issue`) could run without Review. The hook is shared between GUI and CLI so both enforce the same policy.
 - **`smithy-agent`** — a Session in the terminal. Same loop, tools, Review, and Skills as the editor. The system prompt is a Harness file. `harness.toml` `include` is the only way extra files join it — a markdown file in the harness directory is not sent unless listed. `/inspect` shows the bytes this Session will send. `--yolo` skips Review for in-Project writes.

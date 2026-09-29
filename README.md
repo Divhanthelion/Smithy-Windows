@@ -104,17 +104,18 @@ model all draw from one pool, and whatever your editor holds is weights you
 cannot load. On a 16 GB machine, a three-gigabyte editor is the difference
 between running a 13B model and not running one.
 
-**Dictation is built in, and local.** Hold a key and talk; `whisper-large-v3-turbo`
-runs in-process and the audio never leaves the machine. No separate app, no API
-call, no upload.
+**Dictation is built in, and local.** Press a key and talk; the words appear as
+you say them, and a pause ends it. NVIDIA's Nemotron streaming recognizer runs
+in-process through sherpa-onnx and the audio never leaves the machine. No
+separate app, no API call, no upload.
 
 **Honestly, what it is not:** Windows and macOS are where it runs; Linux
 builds are untested. The deep features — symbol index, call graph — are Rust;
 other languages get syntax highlighting, LSP and the agent, but not the map.
 Jev is the one piece that needs a hosted service and a key; everything else
-works offline. Dictation costs what it saves: about 1.5 GB once Whisper is
-loaded, English only, on the CPU (Apple's Accelerate on macOS, candle's own
-kernels on Windows). It is young, and the [known gaps](#known-gaps) list is the
+works offline. Dictation is English only, on the CPU, about 750 MB while
+loaded, and **not yet tried with a real microphone** in the editor (see
+[Dictation](#dictation)). It is young, and the [known gaps](#known-gaps) list is the
 real one, not a polite one. If you want the most mature agent IDE, it is not
 this. If you want one whose claims you can verify, that is the whole idea.
 
@@ -200,8 +201,19 @@ Put a Vercel AI Gateway key in the OS credential store (service `smithy`,
 account `ai-gateway-api-key`) or in `AI_GATEWAY_API_KEY`. That's all; the
 checks switch on for every Session. `JEV_ENDPOINT`, `JEV_MODEL` and
 `JEV_API_KEY` point the same questions at another server with the same API
-instead. An open model tried that way (Von 1.2) put 32 of the 63 cases on the
-wrong side, so it is not a drop-in replacement.
+instead. Two open models have been tried that way on the 63-case suite:
+
+| Server | Wrong side | Notes |
+|---|---|---|
+| Jev, hosted | 1 | a 429, not a wrong answer |
+| [JevK5](https://huggingface.co/alibiserikbay/JevK5) v0.3, local | 7 | right on every destructive command, weakened test and unfinished task; its numbers run lower, so 5 of the 7 are thresholds tuned for hosted Jev |
+| Von 1.2, local | 32 | not a replacement |
+
+JevK5 runs beside the coding model on the same machine (13.5 GB, about 0.35 s
+a question while that model is busy); the measurements are in the
+[report](reports/2026-09-24-unattended-runs-on-the-thor.md#12-a-local-jev-jevk5-beside-flash-next-29-september).
+Its own thresholds aren't set yet, so for now it is a local fallback, not a
+drop-in replacement.
 
 ## Unattended Runs
 
@@ -658,33 +670,41 @@ keep yours or take the version on disk. Nothing is discarded without asking.
 ### Dictation
 
 Press the microphone in the agent panel, or `⌘⇧V`, and talk. Speech is
-transcribed by Whisper **running in this process** — nothing is uploaded.
+transcribed **in this process** — nothing is uploaded — by NVIDIA's
+[Nemotron Speech Streaming 0.6B](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models)
+(int8, 560 ms chunks) through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx).
 
-The first press downloads the model, roughly 1.6 GB, into
-`~/.local/share/smithy/models`. It takes tens of seconds, needs the network
-once, and needs no Hugging Face account. **That first press only loads the
-model — it doesn't start recording.** Press again once it's ready, so the
-microphone opens when you're actually about to speak.
+The words appear in the prompt as you say them, after whatever was already
+typed. A pause of 1.2 seconds ends the dictation and closes the microphone by
+itself; five seconds with nothing said closes it too, and a press closes it
+early. One dictation runs at most a minute.
 
-Every press after that, and every launch after that, is immediate and works
-offline.
+The first press downloads the model, a 464 MB archive checked against its
+published SHA-256, into `~/.local/share/smithy/models`. It needs the network
+once and no account. **That first press only loads the model — it doesn't
+start recording.** Press again once it's ready. After that, loading takes about
+three seconds and works offline.
 
-Dictation appends rather than replacing, so you can say a sentence, read it,
-and say another.
+> **Untested with a real microphone.** Nemotron replaced Whisper in September
+> 2026. The recognizer is measured on recordings — 3–4× faster than real time on
+> four CPU threads, about 750 MB resident (Whisper held about 1.5 GB), and fed
+> at speaking pace, the first words show 0.8 s in, the text runs about half a
+> second behind, and a pause closes the dictation 0.9 s after the speech ends
+> (`cargo run --release -p smithy-voice --example live`). Nobody has yet
+> dictated into the editor itself with it, so accuracy on a laptop microphone,
+> and whether 1.2 s cuts people off mid-thought, are unknown. Built and tested
+> on Windows only.
 
 <details>
 <summary>Fetching the model yourself</summary>
 
-For an air-gapped machine or a slow link:
-
-```bash
-huggingface-cli download openai/whisper-large-v3-turbo \
-  --cache-dir ~/.local/share/smithy/models
-```
-
-Smithy uses [`whisper-large-v3-turbo`](https://huggingface.co/openai/whisper-large-v3-turbo)
-— about eight times faster to decode than plain `large-v3`, for a barely
-measurable accuracy cost.
+For an air-gapped machine or a slow link, download
+`sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25.tar.bz2`
+from sherpa-onnx's
+[`asr-models` release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models)
+and unpack it into `~/.local/share/smithy/models`, so that directory holds a
+folder of that name with `encoder.int8.onnx`, `decoder.int8.onnx`,
+`joiner.int8.onnx` and `tokens.txt` in it.
 </details>
 
 ### The terminal
@@ -834,8 +854,8 @@ one is missing.
 waiting on your approval, or a long-running tool, finishes first.
 
 **The microphone button does nothing.** Run with `SMITHY_VOICE_DEBUG=1` — it
-reports which input device was chosen, how much audio was captured, and how long
-decoding took. On macOS, check microphone permission in System Settings; on
+reports which input device was chosen and at what rate, the model download,
+and what ended each dictation. On macOS, check microphone permission in System Settings; on
 Windows, Settings → Privacy & security → Microphone, including "Let desktop apps
 access your microphone". The button reports `no microphone` if it was refused.
 
@@ -859,12 +879,9 @@ Honest list, short:
   sent on every keystroke — incremental edits are not implemented.
 - **The agent's picture of your project is a snapshot** from when the session
   started. After restructuring a project, start a new conversation.
-- **Whisper costs about 1.5 GB resident.** The weights ship and load as f16
-  (809M parameters). English only, 30-second chunks, no overlap. The GPU is not
-  used; Metal is out of scope. A quantized GGUF
-  (`candle-transformers` already ships `whisper::quantized_model`) should reach
-  roughly 400–600 MB. Until then, dictation is by far the most expensive thing
-  in the editor.
+- **Dictation has not been tried with a real microphone.** The recognizer is
+  measured on recordings only; see [Dictation](#dictation). English only, CPU
+  only, and built and tested on Windows only.
 - Completions aren't implemented yet.
 - **Jev needs a network and a key.** Everything else in Smithy works offline;
   without Jev the Session checks are simply off, and Runs will not start.
