@@ -2,29 +2,28 @@
 //!
 //! A microphone in, a string out. **No floem** — the same separation
 //! `smithy-agent`, `smithy-tools` and `smithy-sky` have, so the thing that
-//! knows about Whisper does not also know about buttons.
+//! knows about speech models does not also know about buttons.
 //!
-//! Ported from `app-ottex`, which had already solved the hard parts: Whisper
-//! through candle on a dedicated OS thread behind a command channel, so a
-//! transcription that takes two seconds cannot stall a UI frame. What did not
-//! come across is everything ottex needed as a standalone tray app — global
-//! hotkeys, synthetic keystrokes, the cloud API fallback, desktop notifications.
-//! Smithy has its own answers to all four, and porting them would have meant
-//! two.
+//! Recognition runs on a dedicated OS thread behind a command channel, so
+//! decoding cannot stall a UI frame. It was Whisper through candle (ported
+//! from `app-ottex`); it is now NVIDIA's Nemotron Speech Streaming model
+//! through sherpa-onnx — more accurate, about a third of the memory, and
+//! streaming, so it can listen as you talk.
 //!
 //! ## The model is loaded, not called
 //!
-//! Whisper runs *in this process*. Nothing is uploaded and nothing needs a key,
-//! which is the same rule the agent follows — and the reason the first press of
-//! the microphone is slow: several hundred megabytes are fetched from Hugging
-//! Face and cached. Every press after that, and every launch after that, is
-//! immediate and works with the network off.
+//! The model runs *in this process*. Nothing is uploaded and nothing needs a
+//! key, which is the same rule the agent follows — and the reason the first
+//! press of the microphone is slow: a 464 MB archive is downloaded once,
+//! checked against its published SHA-256 and unpacked. Every press after that,
+//! and every launch after that, is immediate and works with the network off.
 //!
 //! That cost is why loading is a state a caller can see rather than something
 //! hidden inside the first recording. A button that appears dead for forty
 //! seconds is indistinguishable from a broken one.
 
 pub mod audio;
+pub mod fetch;
 pub mod inference;
 pub mod model;
 pub mod resample;
@@ -122,8 +121,8 @@ pub fn press(state: &Voice) -> Press {
 
 /// Tidy a raw transcript for insertion into a prompt.
 ///
-/// Whisper pads with spaces and is fond of a trailing full stop on a fragment.
-/// Neither belongs in the middle of a sentence somebody is still dictating.
+/// Recognizers pad with spaces. That does not belong in the middle of a
+/// sentence somebody is still dictating.
 pub fn tidy(raw: &str) -> String {
     raw.trim().to_string()
 }

@@ -176,7 +176,7 @@ impl RecordedAudio {
     // transcription API; this crate decodes in-process and never serialises a
     // recording at all — which is also the privacy claim, so it is worth the
     // dependency staying out of the manifest rather than merely unused.
-    /// The recording as **16 kHz mono f32** — the only shape Whisper accepts.
+    /// The recording as **16 kHz mono f32** — the shape the recognizer is fed.
     ///
     /// This is the whole reason [`crate::resample`] exists, and nothing called
     /// it: the microphone's raw samples went straight to the model. A default
@@ -188,7 +188,7 @@ impl RecordedAudio {
     /// Already-correct audio is passed straight through, which is not just an
     /// optimisation: the resampler works in fixed-size chunks and zero-pads the
     /// tail, so running it needlessly appends silence to every recording.
-    pub fn to_whisper_pcm(&self) -> Result<Vec<f32>> {
+    pub fn to_pcm_16khz(&self) -> Result<Vec<f32>> {
         if self.sample_rate == 16_000 && self.channels == 1 {
             return Ok(self.samples.iter().map(|&s| s as f32 / 32768.0).collect());
         }

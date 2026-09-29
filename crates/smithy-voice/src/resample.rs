@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use rubato::{FftFixedIn, Resampler};
 
 /// Resamples audio from the microphone's native rate to 16kHz mono,
-/// which is what Whisper expects.
+/// which is what the recognizer is fed.
 pub struct AudioResampler {
     resampler: FftFixedIn<f32>,
     input_channels: usize,
@@ -77,8 +77,8 @@ impl AudioResampler {
         let remaining = total_frames - pos;
         if remaining > 0 {
             // Zero-padded to a full chunk, which is why the output runs a
-            // little past the audio. Harmless downstream: Whisper pads to 30
-            // seconds regardless, and `RecordedAudio::to_whisper_pcm` skips this
+            // little past the audio. Harmless downstream: the recognizer is fed
+            // trailing silence anyway, and `RecordedAudio::to_pcm_16khz` skips this
             // path entirely when the device already gives 16 kHz mono.
             let chunk: Vec<Vec<f32>> = channels
                 .iter()

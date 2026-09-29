@@ -2,7 +2,7 @@
 //!
 //! `smithy-voice` turns audio into a string and knows nothing about buttons;
 //! this is the other half — one press handler, and the bridge that carries
-//! results from the Whisper thread onto the screen.
+//! results from the recognizer's thread onto the screen.
 //!
 //! What a press *means* is [`smithy_voice::press`], a pure function tested
 //! without a microphone. What it *does* is here, because that is where the
@@ -35,7 +35,7 @@ pub struct VoiceControl {
 }
 
 impl VoiceControl {
-    /// Start the Whisper thread and bridge its events onto the UI.
+    /// Start the recognizer's thread and bridge its events onto the UI.
     ///
     /// The thread is spawned now and the *model* is not — nothing is fetched
     /// until the first press, so a launch costs a thread and nothing else.
@@ -112,8 +112,8 @@ impl VoiceControl {
                     Ok(audio) if audio.has_audio() => {
                         // Resampled to 16 kHz mono here, not sent raw. The
                         // microphone runs at whatever rate it likes — 48 kHz on
-                        // this machine — and Whisper accepts exactly one shape.
-                        match audio.to_whisper_pcm() {
+                        // this machine — and the recognizer is fed 16 kHz mono.
+                        match audio.to_pcm_16khz() {
                             Ok(pcm) => {
                                 self.state.set(Voice::Transcribing);
                                 self.transcriber.transcribe(pcm);

@@ -15,23 +15,20 @@ rust-version.workspace = true
 # fallback and the notification surface. Smithy has its own answers to all four.
 [dependencies]
 anyhow = { workspace = true }
-# Audio capture and resampling to the 16 kHz mono Whisper expects.
+# Audio capture and resampling to the 16 kHz mono the recognizer expects.
 cpal = "0.15"
 rubato = "0.14"
-# Embedded inference: the model runs in this process, not behind an API.
-candle-core = "0.9"
-candle-nn = "0.9"
-candle-transformers = "0.9"
-hf-hub = "0.4"
-tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
-byteorder = "1.5"
+# Speech recognition, in this process: k2-fsa's sherpa-onnx, linked
+# statically, running NVIDIA's Nemotron streaming model.
+sherpa-onnx = "1.13.8"
+# Fetching the model once: a checked download of a .tar.bz2 release archive.
+ureq = "2"
+sha2 = { workspace = true }
+tar = "0.4"
+bzip2 = "0.5"
 serde_json = { workspace = true }
 crossbeam-channel = "0.5"
-rand = "0.8"
 serde = { workspace = true }
 
-# Accelerate is Apple's BLAS; `accelerate-src` links it as a framework and
-# refuses to build anywhere else. Elsewhere candle falls back to its own CPU
-# kernels, which is slower to decode but needs no system library.
-[target.'cfg(target_os = "macos")'.dependencies]
-candle-core = { version = "0.9", features = ["accelerate"] }
+[dev-dependencies]
+tempfile = { workspace = true }
