@@ -34,7 +34,7 @@ waits for your go-ahead unless you turn YOLO on.
 | | |
 |---|---|
 | **Jev** | A second model at every step of every Session: a risky-command check under YOLO, loop detection, and a "really done?" check; in Runs, the intent guardrail, the test-weakening check and the next move. [How it works →](#jev-a-second-model-that-checks-the-first) |
-| **Unattended Runs** | `smithy-agent run` turns an intent into planned, researched, checked commits on their own branch, and writes a morning report. Resumable, detachable, never pushes. [How it works →](#unattended-runs) |
+| **Unattended Runs** | `smithy-agent run` turns an intent into planned, researched, checked commits on their own branch, and writes a morning report. Resumable, detachable, never pushes. [How it works →](#unattended-runs) · [Set up a Jetson AGX Thor →](thor/THOR.md) |
 | **Research you can check** | Every page the agent reads is saved by hash; `cite_check` confirms each quoted finding is really on the page it cites; Notes are kept in a library shared between Projects. |
 | **Windows** | The agent's shell is Git for Windows' bash, with a Job Object so a timeout kills the whole process tree. Windows paths, `USERPROFILE`, keys in Credential Manager, toast notifications, and a window that fits the screen at any scaling. |
 | **Measured, in the open** | [A field report](reports/2026-09-24-unattended-runs-on-the-thor.md) on five real Runs with a local model on a Jetson AGX Thor: the first finished one task of six in three and a half hours; the fourth finished everything in 53 minutes; the fifth, on a real project, wrote code that matched an outside reference (Hebcal) on all 13,991 days of Daf Yomi and 351 molad announcements checked. |
@@ -109,11 +109,13 @@ you say them, and a pause ends it. NVIDIA's Nemotron streaming recognizer runs
 in-process through sherpa-onnx and the audio never leaves the machine. No
 separate app, no API call, no upload.
 
-**Honestly, what it is not:** Windows and macOS are where it runs; Linux
-builds are untested. The deep features — symbol index, call graph — are Rust;
-other languages get syntax highlighting, LSP and the agent, but not the map.
-Jev is the one piece that needs a hosted service and a key; everything else
-works offline. Dictation is English only, on the CPU, about 750 MB while
+**Honestly, what it is not:** the editor runs on Windows and macOS; on Linux
+it is untested. (The command-line agent, `smithy-agent`, runs Runs daily on a
+Jetson AGX Thor's Linux: see [thor/THOR.md](thor/THOR.md).) The deep features —
+symbol index, call graph — are Rust; other languages get syntax highlighting,
+LSP and the agent, but not the map. Jev needs either a hosted service with paid
+credits or [JevK5](#turning-it-on) on your own GPU; everything else works
+offline. Dictation is English only, on the CPU, about 750 MB while
 loaded, and **not yet tried with a real microphone** in the editor (see
 [Dictation](#dictation)). It is young, and the [known gaps](#known-gaps) list is the
 real one, not a polite one. If you want the most mature agent IDE, it is not
@@ -198,8 +200,10 @@ characters) and Notes (up to 7,000).
 ### Turning it on
 
 Put a Vercel AI Gateway key in the OS credential store (service `smithy`,
-account `ai-gateway-api-key`) or in `AI_GATEWAY_API_KEY`. That's all; the
-checks switch on for every Session. `JEV_ENDPOINT`, `JEV_MODEL` and
+account `ai-gateway-api-key`) or in `AI_GATEWAY_API_KEY`. The account needs
+paid credits: the gateway refuses Jev to free-tier accounts (`403 Free tier
+users do not have access to this model`). That's all; the checks switch on for
+every Session. `JEV_ENDPOINT`, `JEV_MODEL` and
 `JEV_API_KEY` point the same questions at another server with the same API
 instead. Two open models have been tried that way on the 63-case suite:
 
@@ -297,8 +301,9 @@ You need:
   [LM Studio](https://lmstudio.ai), or any OpenAI-compatible server such as
   vLLM (set its URL under Backend Settings). A hosted backend (DeepSeek,
   OpenRouter) works too.
-- For [Jev](#turning-it-on), a Vercel AI Gateway key. Optional for the editor,
-  required for unattended Runs.
+- For [Jev](#turning-it-on), a Vercel AI Gateway key with paid credits, or
+  JevK5 served on your own GPU. Optional for the editor, required for
+  unattended Runs.
 
 ```bash
 git clone https://github.com/Divhanthelion/Smithy-Windows.git
@@ -579,9 +584,9 @@ There is no marketplace and no `/mcp` Command.
 
 This fork's unattended Runs were developed against **Qwen3.8-Flash-Next**
 (NVFP4, FP8-hybrid side weights) served by vLLM on an NVIDIA Jetson AGX Thor,
-with prefix caching on and three request slots (`--slots 3`); the serving
-recipe is in Appendix B of the
-[field report](reports/2026-09-24-unattended-runs-on-the-thor.md). For the
+with prefix caching on and three request slots (`--slots 3`). **To set up a
+Thor the same way** — server, agent, keys, a local Jev, and a first Run — follow
+[thor/THOR.md](thor/THOR.md); its scripts are in the same folder. For the
 editor with LM Studio, the original project's known-good setup:
 
 | | |
