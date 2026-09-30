@@ -225,8 +225,8 @@ wrong. The next person to read it would believe it.
 ## A Jev of our own
 
 Jev, the second model that checks the first, is the one part of a Run that
-needs the internet and a key. So we tried a local one: JevK5, a four-billion-
-parameter model trained to answer Jev's questions, running on the Thor
+needs the internet and a key. So we tried a local one: JevK5, a
+four-billion-parameter model trained to answer Jev's questions, running on the Thor
 beside the model doing the work. On our 63 test cases the hosted Jev puts one
 on the wrong side, and JevK5 puts seven. Every one of the seven is on a
 question where a wrong answer costs time rather than damage. It caught every
