@@ -2,8 +2,8 @@
 
 *A field report on Smithy's unattended Runs: four trial runs and one real
 project on a Jetson AGX Thor, what the first one broke, what it took for the
-rest to finish, where the time goes, and whether the result was right.
-23–25 September 2026.*
+rest to finish, where the time goes, whether the result was right, and a
+first try at a local Jev. 23–29 September 2026.*
 
 ---
 
@@ -258,9 +258,11 @@ everything around the model.
 
 # Technical report
 
-**Period:** 2026-09-23 17:36 UTC – 2026-09-25 23:25 UTC
-**Repository:** `Smithy-Windows` on GitHub, 44 commits from `736e89a`
-to the commit carrying this report, 562 tests passing (smithy-agent 271 + 28
+**Period:** 2026-09-23 17:36 UTC – 2026-09-29 (§12: 29 September)
+**Repository:** `Smithy-Windows` on GitHub, 50 commits from `4c63a68`
+to the commit carrying this report; 1,242 tests passing across the workspace
+on 30 September (1,161 in the libraries and tools, 81 in the editor). The
+Runs crates alone had 562 on 25 September (smithy-agent 271 + 28
 integration, smithy-tools 158 + 7, smithy-run 72 + 16 end-to-end, smithy-cli
 10).
 **Hardware:** NVIDIA Jetson AGX Thor, 128 GB unified memory (122.8 GiB
@@ -268,7 +270,7 @@ visible), JetPack 7.1 / L4T R38, 1 TB NVMe; Windows 11 laptop as the
 Smithy host.
 **Models:** Qwen3.8-Flash-Next (NVFP4; FP8-hybrid side weights from 25
 September) via vLLM on the Thor; Jev
-(`typesafe-ai/jev`) via the Vercel AI Gateway.
+(`typesafe-ai/jev`) via the Vercel AI Gateway; JevK5 v0.3 on the Thor (§12).
 
 ## 1. Summary
 
@@ -313,7 +315,12 @@ September) via vLLM on the Thor; Jev
 - **Co-residency measured:** an idle second model costs nothing; a busy one
   costs Flash-Next 12–62%. Apodex does not fit beside it.
 - **Von vs Jev** on Smithy's 63-case suite: Von 32 wrong, Jev 0 (one 429).
+- **A local Jev** (§12): JevK5 v0.3 beside Flash-Next puts 7 of the 63 on the
+  wrong side (Laya 37), right on every destructive command, weakened test and
+  unfinished task; 0.35 s a question under load, 13.5 GB, no cost to
+  Flash-Next while idle. Its own thresholds are not set yet.
 - **Network:** Thor was on 2.4 GHz Wi-Fi (144 Mbit/s link). Wired: 79–100 MB/s.
+  Since 28 September it is on Wi-Fi again (~10.7 MB/s from Hugging Face).
 - **Model inventory** downloaded for the next phase (~210 GB); 230 GB of
   superseded copies removed.
 
@@ -495,7 +502,7 @@ findings verified — and the second caught a bug in T1's committed code.
 | 6 | `cite_check` rejected dense quotes | Fixed |
 | 7 | `git stash list` refused | Fixed |
 | 8 | No prefix caching on vLLM | Fixed on the new server (§6) |
-| 9 | One 57-minute turn before any check; scope creep into later tasks | Fixed: the task's checks run as the model works and end the turn when they pass; 20-minute build turns (`893bff2`) |
+| 9 | One 57-minute turn before any check; scope creep into later tasks | Fixed: the task's checks run as the model works and end the turn when they pass; 20-minute build turns (`a8dadb9`) |
 | 10 | No conversation logs | Fixed: Run logs |
 
 ## 6. Serving on the Thor
@@ -631,7 +638,7 @@ results. What remains:
    Acceptable while the model has the `write` tool and other ways round.
 
 From the real project (§11). The first four were fixed on 27 September
-(`d47fdb0`); the fifth is a direction, not a bug:
+(`a7eaf7d`); the fifth is a direction, not a bug:
 
 6. ~~**Preflight should run the checks' tools.**~~ It now probes cargo
    subcommands that do not ship with cargo (`cargo clippy`, `cargo fmt`,
@@ -683,7 +690,7 @@ fit beside Flash-Next at all (20 GB available). So: small models may stay
 resident for occasional use (speech, embeddings); nothing should run
 continuously beside a Run; Apodex is a swap, not a neighbour.
 
-**Shorter turns (3).** Commit `893bff2`: the Task's own checks run every six
+**Shorter turns (3).** Commit `a8dadb9`: the Task's own checks run every six
 tool calls once a file has changed, and the turn ends the first time they
 pass; build turns return to the runner after 20 minutes.
 
@@ -691,7 +698,7 @@ pass; build turns return to the runner after 20 minutes.
 
 **OS updates (6).** 31 packages (none kernel, L4T or Docker), then a reboot.
 
-**Von vs Jev (7).** Commit `c800125`: `JEV_ENDPOINT` / `JEV_MODEL` /
+**Von vs Jev (7).** Commit `43d6332`: `JEV_ENDPOINT` / `JEV_MODEL` /
 `JEV_API_KEY` point Smithy at any server with the same API; the gateway key is
 never sent elsewhere. On Smithy's 63-case suite (`--example jev`), on the same
 evening:
@@ -738,7 +745,7 @@ What it found:
   thought for 15–16k tokens, designing a whole file, and hit the 16,384-token
   cap before writing it. The thinking is never replayed to the model, so each
   retry began again, and the session's correction ("give ONLY the final
-  answer") pointed the wrong way. Fixed in `fa9d717` and `99044be`: no cap for
+  answer") pointed the wrong way. Fixed in `b60f48f` and `40a74cd`: no cap for
   the local server, a reply in flight at the turn limit may finish (15-minute
   grace), a cut-off reply is told what was lost and to take one concrete step,
   and the task prompt says up front to work in small steps and write plans
@@ -749,7 +756,7 @@ What it found:
 - **The shell guard refuses ordinary reads.** Nine read-only commands (`grep`
   and `sed -n` on `src/`, `ls -R src`, `cargo test … | tail`) were refused as
   "reaching outside the Project", most likely on `2>/dev/null`, Git Bash
-  paths (`/c/Users/…`) and `~`. Fixed in `c8c2ec2` (below).
+  paths (`/c/Users/…`) and `~`. Fixed in `5ad6462` (below).
 
 **Third real Run.** The same intent from the same clean `master`, on a build
 with the fixes above and the shell guard repaired: run `20260925-0112-de54`,
@@ -772,7 +779,7 @@ second Run, made 23 replies in its first turn against 8, the longest with
 `-P1D` with reasons. In a test comment the model noted an arithmetic slip in
 its own plan (274,200 for 275,400) and used the right value.
 
-**The shell guard.** `c8c2ec2` fixed the second Run's three causes: Git Bash
+**The shell guard.** `5ad6462` fixed the second Run's three causes: Git Bash
 drive paths (`/c/Users/…`) are judged as the Windows paths they are, the
 standard streams and `/dev/null` are not files outside the Project, and a
 bare `\` left by splitting a regex is an escape, not a drive root. Of the
@@ -823,7 +830,7 @@ bound by its clock rather than its tokens: questions run side by side finish
 when the longest does. With `--slots N` above one (`SMITHY_RUN_SLOTS`), a Run
 now researches every question its plan asks before the first Task, N at a
 time; each still passes its Task's Guardrail, has its need reported and
-reuses a Note that answers it (`0a9b962`). The launch script serves three
+reuses a Note that answers it (`61dc3aa`). The launch script serves three
 slots.
 
 **Less: research that stops when done.** A research turn now ends when its
@@ -862,7 +869,7 @@ verified more. On the decision, thinking found the fact that settled it (ISO
 its Unknowns, that it had not reached that clause; Jev scored them alike. The
 middle question stalled both ways on ISO's paywalled text. So a lookup now
 runs without thinking and a decision or deep research with it
-(`811ea1e`); building keeps thinking.
+(`ba595a8`); building keeps thinking.
 
 **The estimate.** From the third Run's breakdown: research side by side
 would take its questions in about 20 minutes rather than 37; the hybrid takes
@@ -960,6 +967,11 @@ So the calendar arithmetic was sound. The problems were elsewhere:
 
 ### 11.3 What the Run produced
 
+*The Run's branch (`smithy/run-20260925-0707-82d4`, with `ae4b7c1` and the
+three commits below) stayed on the Thor and was not pushed. hebrew-calendar
+0.2 on GitHub carries its molad and Daf Yomi code in later commits (§11.8).
+`5ca089e` is public.*
+
 `e7984a2` T1 molad (`molad.rs` 335 lines + 253 of tests), `d3d2ab9` T2 Daf
 Yomi (`daf_yomi.rs` 384 + 376), `2211b99` T3 public API (`lib.rs` +193). T1
 hoisted the molad-of-Tishrei parts arithmetic out of
@@ -1006,11 +1018,11 @@ What the review found in the new code:
 | 07:07 | Started on the laptop, from the Claude Code session. Planning. |
 | 08:12 | Planner's turn hits its 60-minute limit; plan written at 08:25 (3 Tasks, 6 questions). |
 | 08:25–08:59 | Research, three at a time: T1's three questions (20 min), then T2's. |
-| 08:59 | **Stopped: laptop restarted**; the Run was a child of the session. Moved to the Thor, launched detached (`setsid nohup`); resume learned to take a log directory from another machine and new ceilings (`57fced1`). |
+| 08:59 | **Stopped: laptop restarted**; the Run was a child of the session. Moved to the Thor, launched detached (`setsid nohup`); resume learned to take a log directory from another machine and new ceilings (`e29dfdb`). |
 | 12:12 | Resumed on the Thor; T2's research. |
-| 12:18 | **Stopped: HTTP 400** "min_p … not yet supported with speculative decoding" on all three concurrent sessions. The per-provider "don't send min_p" flag was only honoured by the first request to be refused; the others retried with it (`95dadcd`, with a test against a local server that fails on the old code). |
+| 12:18 | **Stopped: HTTP 400** "min_p … not yet supported with speculative decoding" on all three concurrent sessions. The per-provider "don't send min_p" flag was only honoured by the first request to be refused; the others retried with it (`535371d`, with a test against a local server that fails on the old code). |
 | 12:23 | Resumed. |
-| 12:29–12:32 | T1 attempt 1: the shell guard refused a scratch directory, the model put a probe file in `src/`, Jev (68–80%) held back `rm` of it, and the loop stopped. The failure question then quoted "Compiling hebrew_core…" rather than the error. **Stopped by hand**; `c9b8cdd`: a per-Run scratch directory the guard allows, deleting files the session itself wrote needs no review, the failure question quotes the first error line. |
+| 12:29–12:32 | T1 attempt 1: the shell guard refused a scratch directory, the model put a probe file in `src/`, Jev (68–80%) held back `rm` of it, and the loop stopped. The failure question then quoted "Compiling hebrew_core…" rather than the error. **Stopped by hand**; `10e1236`: a per-Run scratch directory the guard allows, deleting files the session itself wrote needs no review, the failure question quotes the first error line. |
 | 12:39–14:37 | T1 attempts 2 and 3: five 20-minute turns without a passing check, then green after 18 tool calls. **T1 done.** |
 | 14:37 | **Stopped by hand** at T2's start: the Thor's over-current alarm (`soctherm` oc3) had counted 824 in the first hour at MAXN and 1,261 by now. Moved room and outlet; replaced a flaky Ethernet cable; the direct link's DHCP (no server on that cable) was dropping the link and was set to a static address. |
 | 20:00 | Resumed, still at MAXN: oc3 1 → 85 → 99 within minutes of generation. |
@@ -1050,7 +1062,7 @@ after the plan.
 515 decisions: 464 loop checks (451 continue, 9 nudges, 4 stops), 17
 guardrail (all build), 11 next-step (10 later shown right, none wrong), 11
 research reports, 6 each of done and answered. 88 refused commands; the
-largest groups were writes outside `.smithy/research/` before `c9b8cdd` and
+largest groups were writes outside `.smithy/research/` before `10e1236` and
 T3's 38 attempts to install clippy. No refusal cost correct work; the scratch
 directory's absence did, until fixed.
 
@@ -1165,49 +1177,55 @@ answer on next move. With those, a Run would need no network and no key.
 ## Appendix A. Commits
 
 ```
-736e89a Unattended runs: the design, and words for it
-5ad2b8a smithy-run: the toolchain seam and Checks
-e614806 smithy-run: git belongs to the runner
-542282b smithy-run: the Plan, and what a check may say
-fe2b27e smithy-run: Run state, the decision log, and the morning report
-4fbb3eb Research you can check: saved sources, cite_check, find_notes
-0a5a2ea Jev: the decisions an unattended Run asks for, calibrated
-b448859 smithy-run: cheat checks on tests that predate the Run
-b401a34 smithy-run: the runner — intent to plan to checked commits, resumable
-4b6bcd7 smithy-agent run: unattended Runs from the terminal
-7a97436 Run: say whether web_search is on; DESIGN records what changed
-e1fbccb cite_check: a dense quote identifies as well as a sentence
-2aaf432 Run: preflight the toolchain; don't claim a cache rate nobody reported
-904ee4b cmake adapter: ctest -C Debug
-2214b4b Run: don't research the same question twice on resume
-7f603c6 Run: the model may look at stashes
-05e4f7f Research: draft the note early, and be told to if you don't
-56fcc63 Runs: research is the exception, plans are as small as the intent
-eca3e11 Runs: research scales with the question, not a cap; post-mortem
-acd62fe Run logs: every request, tool call and check timed; every conversation kept
-f0b78f8 Post-mortem: keep the log row inside its table
-c992ab4 Research: Jev reports, it does not gate
-85edae5 Report: unattended Runs and the Thor, 23-24 September
-893bff2 Runs: a build turn ends when its Task's checks pass
-c800125 Jev: the endpoint and model can point at a compatible server
-fa9d717 Limits that fired on good work: the reply cap, and a reply cut off in flight
-99044be Prompts: say why thinking is lost, and which tests are the Run's own
-a93e551 Report: the nine open items, and the second real Run
-1a82996 Report: rewrite the cover around two runs; bring the technical report current
-c8c2ec2 Shell guard: Git Bash drive paths, /dev/null, and a bare backslash
-aa08fd8 Shell guard: a heredoc that only writes a file is data; report run 3
-0a9b962 Research: side by side, done when done, shared between Projects
-811ea1e Research: a lookup does not think; a decision does
-7fbf53d Report: where the time goes, and what was changed because of it
-27c69ff Report: the fourth Run — 53 minutes, measured
-85cf5df Scrub LAN addresses and a local username from the repo
-f1d2be2 Report and DESIGN: the guardrail's stop side is uncalibrated
-57fced1 Resume: new ceilings, and a log directory from another machine
-95dadcd LM Studio provider: every request refused for min_p retries, not only the first
-c9b8cdd Runs: a scratch directory the shell allows, and deleting what you made
-9a04d99 Report: a real project — hebrew-calendar, checked against Hebcal
-d47fdb0 Runs: what the hebrew-calendar Run needed a person for
-85c4338 Formatting, and the float literals the newer compiler will reject
+4c63a68 Unattended runs: the design, and words for it
+f7755bb smithy-run: the toolchain seam and Checks
+7b91336 smithy-run: git belongs to the runner
+66b2661 smithy-run: the Plan, and what a check may say
+e679b07 smithy-run: Run state, the decision log, and the morning report
+d247250 Research you can check: saved sources, cite_check, find_notes
+58f704f Jev: the decisions an unattended Run asks for, calibrated
+c8c4448 smithy-run: cheat checks on tests that predate the Run
+f63d4e0 smithy-run: the runner — intent to plan to checked commits, resumable
+a3a9f69 smithy-agent run: unattended Runs from the terminal
+bc6adba Run: say whether web_search is on; DESIGN records what changed
+eb77208 cite_check: a dense quote identifies as well as a sentence
+929e3c9 Run: preflight the toolchain; don't claim a cache rate nobody reported
+bf309d8 cmake adapter: ctest -C Debug
+73e7bea Run: don't research the same question twice on resume
+0103c8b Run: the model may look at stashes
+5de543a Research: draft the note early, and be told to if you don't
+7cca28e Runs: research is the exception, plans are as small as the intent
+ddf1ef3 Runs: research scales with the question, not a cap; post-mortem
+6ac9567 Run logs: every request, tool call and check timed; every conversation kept
+637a31b Post-mortem: keep the log row inside its table
+dc0f108 Research: Jev reports, it does not gate
+16207cf Report: unattended Runs and the Thor, 23-24 September
+a8dadb9 Runs: a build turn ends when its Task's checks pass
+43d6332 Jev: the endpoint and model can point at a compatible server
+b60f48f Limits that fired on good work: the reply cap, and a reply cut off in flight
+40a74cd Prompts: say why thinking is lost, and which tests are the Run's own
+84ab6f7 Report: the nine open items, and the second real Run
+ce7afe1 Report: rewrite the cover around two runs; bring the technical report current
+5ad6462 Shell guard: Git Bash drive paths, /dev/null, and a bare backslash
+898a295 Shell guard: a heredoc that only writes a file is data; report run 3
+61dc3aa Research: side by side, done when done, shared between Projects
+ba595a8 Research: a lookup does not think; a decision does
+8805468 Report: where the time goes, and what was changed because of it
+f9bc1bb Report: the fourth Run — 53 minutes, measured
+bf529bc Report and DESIGN: the guardrail's stop side is uncalibrated
+e29dfdb Resume: new ceilings, and a log directory from another machine
+535371d LM Studio provider: every request refused for min_p retries, not only the first
+10e1236 Runs: a scratch directory the shell allows, and deleting what you made
+6d4bebb Report: a real project — hebrew-calendar, checked against Hebcal
+a7eaf7d Runs: what the hebrew-calendar Run needed a person for
+710ade2 Formatting, and the float literals the newer compiler will reject
+4287bab Report and README: the follow-ups fixed, and ready to be read in public
+e6993f5 CI: actions/checkout v5 (v4 runs on the deprecated Node 20)
+ce356d4 README: Jev, the second model that checks the first
+b1e651b README: what this fork is, for Windows, with Jev and Runs up front
+f96e221 Voice: Nemotron streaming through sherpa-onnx, in place of Whisper
+25cb9cc Voice: live dictation, ended by a pause
+2074d14 Report and README: JevK5 as a local Jev; dictation on Nemotron, untested live
 ```
 
 ## Appendix B. Thor state
