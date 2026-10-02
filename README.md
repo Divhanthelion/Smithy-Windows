@@ -297,10 +297,12 @@ You need:
   default, which needs the Visual Studio Build Tools.
 - On Windows, [Git for Windows](https://git-scm.com/download/win): the agent's
   shell is its bash, found beside `git` on your `PATH` (not WSL's `bash`).
-- For the agent, a model server with a tool-capable model loaded:
-  [LM Studio](https://lmstudio.ai), or any OpenAI-compatible server such as
-  vLLM (set its URL under Backend Settings). A hosted backend (DeepSeek,
-  OpenRouter) works too.
+- For the agent, a model. The simplest is an API key from
+  [OpenRouter](https://openrouter.ai/keys) (it has free models) or
+  [DeepSeek](https://platform.deepseek.com/api_keys): on the first launch
+  Smithy opens its setup dialog, you paste the key and pick a model. Or run your
+  own: [LM Studio](https://lmstudio.ai), or any OpenAI-compatible server such as
+  vLLM.
 - For [Jev](#turning-it-on), a Vercel AI Gateway key with paid credits, or
   JevK5 served on your own GPU. Optional for the editor, required for
   unattended Runs.
@@ -353,7 +355,15 @@ LM Studio — you just won't have an agent.
 
 ### Pointing it at a model
 
-Load any tool-capable model in LM Studio and start the server. Smithy checks at
+**With an API key (most people).** On a first launch with nothing set up, Smithy
+opens **Agent → Backend Settings…** by itself. Choose OpenRouter or DeepSeek,
+paste your key, pick a model from the list (OpenRouter's "free" filter shows the
+ones that cost nothing), and press *Save & reconnect*. The key goes into Windows
+Credential Manager (the macOS Keychain on a Mac), never into a file, and only to
+that provider. The same dialog takes an optional Brave Search key (web search
+for the agent) and an optional Jev key.
+
+**With your own server.** Load any tool-capable model in LM Studio and start the server. Smithy checks at
 launch that the model is actually resident in memory, not merely downloaded, and
 tells you which if it isn't.
 
@@ -935,6 +945,11 @@ The sandbox for filesystem tools is a capability, not a path check: those tools
 hold a `cap-std` directory handle for your project root, so the OS itself refuses
 to let those reads and writes out — symlinks included. Shell is gated by
 approval, not by that capability.
+
+## Privacy
+
+Smithy collects nothing: no account, no telemetry, no analytics. What it sends,
+and only to the services you configure, is in [PRIVACY.md](PRIVACY.md).
 
 ## Licence
 

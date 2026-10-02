@@ -181,7 +181,13 @@ impl Endpoint {
 ///
 /// Both endpoints are kept, not just the selected one, so that switching back
 /// and forth does not lose the model you had configured on the other side.
+///
+/// A file missing a section takes that section's default rather than failing
+/// to parse: a failed parse falls back to the environment wholesale, which
+/// turned a hand-written file naming only the backend in use into a silent
+/// switch to LM Studio on `localhost:1234`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AgentConfig {
     pub provider: ProviderChoice,
     pub lmstudio: Endpoint,
@@ -778,6 +784,23 @@ mod tests {
             assert!(!choice.label().is_empty());
             assert!(!choice.as_str().is_empty());
         }
+    }
+
+    /// A file naming only the backend in use keeps it, rather than failing to
+    /// parse and falling back to LM Studio.
+    #[test]
+    fn a_settings_file_with_only_the_backend_in_use_still_loads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let partial = r#"{
+            "provider": "lmstudio",
+            "lmstudio": { "base_url": "http://localhost:8000/v1", "model": "qwen3.8-flash-next" }
+        }"#;
+        std::fs::write(AgentConfig::file_in(tmp.path()), partial).unwrap();
+
+        let config = AgentConfig::load(tmp.path());
+        assert_eq!(config.lmstudio.base_url, "http://localhost:8000/v1");
+        assert_eq!(config.lmstudio.model, "qwen3.8-flash-next");
+        assert_eq!(config.openrouter, Endpoint::openrouter_default());
     }
 
     /// A settings file written before DeepSeek existed must still load. Without

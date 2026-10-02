@@ -192,7 +192,10 @@ impl Provider for OpenRouter {
             .http
             .get(self.auth_key_url())
             .bearer_auth(&self.api_key)
-            .header("HTTP-Referer", "https://github.com/finalsmithy")
+            .header(
+                "HTTP-Referer",
+                "https://github.com/Divhanthelion/Smithy-Windows",
+            )
             .header("X-Title", "Smithy")
             .send()
             .await
@@ -222,7 +225,10 @@ impl Provider for OpenRouter {
             .http
             .post(self.chat_url())
             .bearer_auth(&self.api_key)
-            .header("HTTP-Referer", "https://github.com/finalsmithy")
+            .header(
+                "HTTP-Referer",
+                "https://github.com/Divhanthelion/Smithy-Windows",
+            )
             .header("X-Title", "Smithy")
             .json(&self.build_body(&request))
             .timeout(request.http_timeout(REQUEST_TIMEOUT))

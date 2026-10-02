@@ -1,0 +1,9 @@
+# Windows: link the C runtime statically, so smithy.exe runs on a PC without the
+# Visual C++ Redistributable (VCRUNTIME140.dll), as a Store install must. It also
+# matches the prebuilt sherpa-onnx libraries, which use the static runtime
+# (the LNK4098 "defaultlib LIBCMT conflicts" warning was this mismatch).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

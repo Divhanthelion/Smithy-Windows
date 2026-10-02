@@ -425,7 +425,8 @@ pub struct AgentState {
 ///    and an argument should always win.
 /// 2. **The most recently opened project.** This is what every editor does, and the
 ///    registry already tracks it — `touch` runs on every project switch.
-/// 3. **The launch directory**, which is only reachable on a genuinely first run.
+/// 3. **A first-run folder** (`~/Smithy Projects`), only reachable on a genuinely
+///    first run; see [`first_run_folder`].
 ///
 /// Step 3 used to be the *only* rule, and it is why running `cargo run -p smithy`
 /// inside this repository opened this repository — so the agent under test wrote
@@ -447,6 +448,27 @@ pub fn startup_project(
     launch_dir
 }
 
+/// Where a first run starts when nothing names a project: `~/Smithy Projects`,
+/// created if missing.
+///
+/// Not the launch directory. Started from the Start menu, that is the app's
+/// own install folder (read-only, inside `WindowsApps` for a Store install) or
+/// `System32`, and the agent would take either for the project it is meant to
+/// work on. An empty folder of its own is safe to write in, and File → Open
+/// Folder is one step away. Falls back to the launch directory only when the
+/// home directory cannot be found or written.
+fn first_run_folder() -> PathBuf {
+    let launch_dir = std::env::current_dir().unwrap_or_default();
+    let Some(home) = dirs::home_dir() else {
+        return launch_dir;
+    };
+    let folder = home.join("Smithy Projects");
+    match std::fs::create_dir_all(&folder) {
+        Ok(()) => folder,
+        Err(_) => launch_dir,
+    }
+}
+
 /// The directory named on the command line, if one was.
 fn path_argument() -> Option<PathBuf> {
     std::env::args_os().nth(1).map(PathBuf::from)
@@ -464,7 +486,7 @@ pub fn init_state() -> (AppState, AppSignals, AgentState) {
     let start_dir = startup_project(
         path_argument(),
         registry.recents().first().map(|r| r.root.clone()),
-        std::env::current_dir().unwrap_or_default(),
+        first_run_folder(),
     );
 
     let file_browser_state = Rc::new(RefCell::new(FileBrowserState::new(start_dir.clone())));

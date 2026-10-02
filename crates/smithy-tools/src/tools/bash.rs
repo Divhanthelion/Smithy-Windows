@@ -143,10 +143,30 @@ fn find_git_bash() -> Option<PathBuf> {
         .and_then(|git| Some(git.parent()?.parent()?.join("bin").join("bash.exe")));
     let default_install = std::env::var_os("ProgramFiles")
         .map(|pf| PathBuf::from(pf).join("Git").join("bin").join("bash.exe"));
+    // A per-user install (the installer's "only for me", and winget's default
+    // scope on a machine without admin rights) lands here and is not always on
+    // the PATH of an app launched from the Start menu.
+    let user_install = std::env::var_os("LOCALAPPDATA").map(|local| {
+        PathBuf::from(local)
+            .join("Programs")
+            .join("Git")
+            .join("bin")
+            .join("bash.exe")
+    });
     beside_git
         .into_iter()
         .chain(default_install)
+        .chain(user_install)
         .find(|candidate| candidate.is_file())
+}
+
+/// Whether the agent can run shell commands here, and if not, why.
+///
+/// For a notice on connect: without a shell the agent can still read, search
+/// and edit, but every build and test it tries fails, and only the model sees
+/// why unless the person is told.
+pub fn shell_available() -> Result<PathBuf, String> {
+    shell()
 }
 
 /// A Job Object holding the shell, so the timeout kills its whole tree.

@@ -22,6 +22,7 @@ use std::path::Path;
 use floem::reactive::{SignalGet, SignalUpdate};
 use smithy_agent::catalogue;
 use smithy_agent::config::{secrets, BRAVE_KEY, DEEPSEEK_KEY, OPENROUTER_KEY};
+use smithy_agent::jev::AI_GATEWAY_KEY;
 use smithy_agent::{AgentConfig, ProviderChoice};
 use smithy_editor::{ModelRow, SettingsState};
 
@@ -30,9 +31,49 @@ use smithy_editor::{ModelRow, SettingsState};
 /// Called every time the dialog opens rather than once at startup, so it always
 /// reflects what is actually stored — including a key added or removed since.
 pub fn open(state: SettingsState, data_dir: &Path) {
-    let config = AgentConfig::load(data_dir);
+    open_with(state, data_dir, None);
+}
 
-    state.provider.set(config.provider.as_str().to_string());
+/// On a first launch with nothing configured, open the dialog by itself.
+///
+/// "Nothing configured" means no settings file, no backend chosen or keyed in
+/// the environment, and no hosted key in the credential store: the state of
+/// every fresh install. Without this the agent quietly tries LM Studio on
+/// `localhost:1234`, which almost nobody installing from a store has, and the
+/// first thing a new user sees is a connection error. OpenRouter is
+/// preselected because it is the one choice that works with no money spent.
+///
+/// Returns whether it opened.
+pub fn open_if_first_run(state: SettingsState, data_dir: &Path) -> bool {
+    if !is_first_run(data_dir) {
+        return false;
+    }
+    open_with(state, data_dir, Some(ProviderChoice::OpenRouter));
+    state.welcome.set(true);
+    true
+}
+
+fn is_first_run(data_dir: &Path) -> bool {
+    let set = |name: &str| std::env::var(name).is_ok_and(|v| !v.trim().is_empty());
+    !AgentConfig::file_in(data_dir).exists()
+        && ![
+            "SMITHY_PROVIDER",
+            "PROVIDER",
+            "LMSTUDIO_URL",
+            "OPENROUTER_API_KEY",
+            "DEEPSEEK_API_KEY",
+        ]
+        .iter()
+        .any(|name| set(name))
+        && !secrets::is_stored(OPENROUTER_KEY)
+        && !secrets::is_stored(DEEPSEEK_KEY)
+}
+
+fn open_with(state: SettingsState, data_dir: &Path, preselect: Option<ProviderChoice>) {
+    let config = AgentConfig::load(data_dir);
+    let provider = preselect.unwrap_or(config.provider);
+
+    state.provider.set(provider.as_str().to_string());
     state.lmstudio_url.set(config.lmstudio.base_url.clone());
     state.lmstudio_model.set(config.lmstudio.model.clone());
     state.openrouter_url.set(config.openrouter.base_url.clone());
@@ -51,13 +92,12 @@ pub fn open(state: SettingsState, data_dir: &Path) {
         .deepseek_key_stored
         .set(secrets::is_stored(DEEPSEEK_KEY));
     state.brave_key_stored.set(secrets::is_stored(BRAVE_KEY));
+    state.jev_key_stored.set(secrets::is_stored(AI_GATEWAY_KEY));
 
     state.forget_typed_secrets();
     state.status.set(String::new());
     // Free-only is meaningless on a local backend, where nothing has a price.
-    state
-        .free_only
-        .set(config.provider == ProviderChoice::OpenRouter);
+    state.free_only.set(provider == ProviderChoice::OpenRouter);
     state.open.set(true);
 
     // Populate the picker without being asked. Both catalogues are one cheap
@@ -256,6 +296,7 @@ pub fn save(state: SettingsState, data_dir: &Path) -> Result<Vec<String>, String
         (OPENROUTER_KEY, state.openrouter_key.get_untracked()),
         (DEEPSEEK_KEY, state.deepseek_key.get_untracked()),
         (BRAVE_KEY, state.brave_key.get_untracked()),
+        (AI_GATEWAY_KEY, state.jev_key.get_untracked()),
     ] {
         if typed.trim().is_empty() {
             continue; // an untouched field means "leave the stored key alone"
@@ -290,6 +331,7 @@ pub fn clear_key(state: SettingsState, account: &str) {
                 OPENROUTER_KEY => state.openrouter_key_stored.set(false),
                 DEEPSEEK_KEY => state.deepseek_key_stored.set(false),
                 BRAVE_KEY => state.brave_key_stored.set(false),
+                AI_GATEWAY_KEY => state.jev_key_stored.set(false),
                 _ => {}
             }
             state.report("Key removed from your keychain.", false);

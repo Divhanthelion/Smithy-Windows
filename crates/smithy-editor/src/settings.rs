@@ -40,8 +40,8 @@ use crate::theme::catppuccin;
 pub const PROVIDERS: [(&str, &str, &str); 3] = [
     (
         "lmstudio",
-        "LM Studio",
-        "A local OpenAI-compatible server. No key needed.",
+        "Your own server",
+        "LM Studio, vLLM, or any OpenAI-compatible server you run. No key needed.",
     ),
     (
         "openrouter",
@@ -94,11 +94,18 @@ pub struct SettingsState {
     pub openrouter_key: RwSignal<String>,
     pub deepseek_key: RwSignal<String>,
     pub brave_key: RwSignal<String>,
+    /// The Vercel AI Gateway key Jev is reached through.
+    pub jev_key: RwSignal<String>,
     /// Whether a key is already in the credential store. Drives the placeholder
     /// and whether "Remove" is offered, without revealing the value.
     pub openrouter_key_stored: RwSignal<bool>,
     pub deepseek_key_stored: RwSignal<bool>,
     pub brave_key_stored: RwSignal<bool>,
+    pub jev_key_stored: RwSignal<bool>,
+    /// Opened by the app itself on a first launch, with nothing configured:
+    /// the header then says what the dialog is for instead of assuming you
+    /// came looking for it.
+    pub welcome: RwSignal<bool>,
     /// Whether the OS credential store answered at all. A machine where it did
     /// not must say so *before* you type a key into a field that cannot save it.
     pub keychain_available: RwSignal<bool>,
@@ -143,9 +150,12 @@ impl SettingsState {
             openrouter_key: RwSignal::new(String::new()),
             deepseek_key: RwSignal::new(String::new()),
             brave_key: RwSignal::new(String::new()),
+            jev_key: RwSignal::new(String::new()),
             openrouter_key_stored: RwSignal::new(false),
             deepseek_key_stored: RwSignal::new(false),
             brave_key_stored: RwSignal::new(false),
+            jev_key_stored: RwSignal::new(false),
+            welcome: RwSignal::new(false),
             keychain_available: RwSignal::new(true),
             status: RwSignal::new(String::new()),
             status_is_error: RwSignal::new(false),
@@ -209,7 +219,9 @@ impl SettingsState {
     /// sit in a signal — or on screen — for the rest of the session.
     pub fn forget_typed_secrets(&self) {
         self.openrouter_key.set(String::new());
+        self.deepseek_key.set(String::new());
         self.brave_key.set(String::new());
+        self.jev_key.set(String::new());
     }
 
     pub fn report(&self, message: impl Into<String>, is_error: bool) {
@@ -219,6 +231,7 @@ impl SettingsState {
 
     pub fn close(&self) {
         self.open.set(false);
+        self.welcome.set(false);
         self.forget_typed_secrets();
         self.status.set(String::new());
     }
@@ -334,25 +347,45 @@ fn panel(
             },
         ),
         model_picker(state, on_refresh_models, on_load_model),
-        // Search is provider-independent, so it sits outside the switch.
+        // Search and Jev are provider-independent, so they sit outside the
+        // switch.
         divider(),
         brave_fields(state, on_clear_key.clone()),
+        divider(),
+        jev_fields(state, on_clear_key.clone()),
     ))
     .style(|s| s.width_full());
 
     Stack::vertical((
-        Label::derived(|| "Agent backend".to_string()).style(|s| {
+        Label::derived(move || {
+            if state.welcome.get() {
+                "Welcome to Smithy".to_string()
+            } else {
+                "Agent backend".to_string()
+            }
+        })
+        .style(|s| {
             s.color(Color::WHITE)
                 .font_size(16.0)
                 .font_bold()
                 .margin_bottom(3.0)
         }),
-        Label::derived(|| {
-            "Applies on save — the agent reconnects and starts a fresh session.".to_string()
+        Label::derived(move || {
+            if state.welcome.get() {
+                "Choose the model the agent will use. With a hosted one (OpenRouter or DeepSeek) \
+                 you paste your own API key: it is kept in Windows Credential Manager and sent \
+                 only to that provider. OpenRouter has free models to start with. You can change \
+                 this any time under Agent → Backend Settings."
+                    .to_string()
+            } else {
+                "Applies on save — the agent reconnects and starts a fresh session.".to_string()
+            }
         })
         .style(|s| {
             s.color(catppuccin::OVERLAY1)
                 .font_size(11.0)
+                .line_height(1.4)
+                .width_full()
                 .margin_bottom(14.0)
         }),
         floem::views::scroll::Scroll::new(body)
@@ -838,7 +871,26 @@ fn brave_fields(state: SettingsState, on_clear_key: std::rc::Rc<dyn Fn(&str)>) -
             "brave-api-key",
             on_clear_key,
         ),
-        hint("Enables the agent's `web_search` tool. Without it, it can still fetch a URL it is given."),
+        hint("Optional. Enables the agent's `web_search` tool. Without it, it can still fetch a URL it is given."),
+    ))
+    .style(|s| s.width_full().gap(8.0))
+}
+
+fn jev_fields(state: SettingsState, on_clear_key: std::rc::Rc<dyn Fn(&str)>) -> impl IntoView {
+    Stack::vertical((
+        secret_field(
+            "Jev key (Vercel AI Gateway)",
+            state.jev_key,
+            state.jev_key_stored,
+            "ai-gateway-api-key",
+            on_clear_key,
+        ),
+        hint(
+            "Optional for the editor; unattended Runs need it. Jev is a second, fast model that \
+             checks the agent's work: it flags risky shell commands, notices when the agent is \
+             going in circles, and asks whether \"done\" really is. The gateway account needs \
+             paid credits.",
+        ),
     ))
     .style(|s| s.width_full().gap(8.0))
 }

@@ -151,6 +151,7 @@ fn app_view() -> impl IntoView {
     // live on disk, and this is only what the form is currently showing.
     let settings_state = smithy_editor::SettingsState::new();
     let settings_dir = agent_state.registry.data_dir().to_path_buf();
+    settings::open_if_first_run(settings_state, &settings_dir);
 
     // The project map, shown behind the shortcuts when no file is open.
     //

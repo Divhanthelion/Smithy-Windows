@@ -409,6 +409,14 @@ pub async fn build_session(
     let read_only_mcp_tools = mcp.read_only_tools;
     let harness = smithy_agent::load_harness(&project.root);
     notices.extend(harness.notices.iter().cloned());
+    if registry.names().contains(&"bash") && smithy_tools::tools::bash::shell_available().is_err() {
+        notices.push(
+            "Git for Windows is not installed, so the agent cannot run commands (builds, \
+             tests, git). It can still read, search and edit files. Install it from \
+             https://git-scm.com/download/win (or `winget install Git.Git`), then reconnect."
+                .into(),
+        );
+    }
     let already: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
     for tool in mcp.tools {
         if already.iter().any(|n| n == tool.name()) {
