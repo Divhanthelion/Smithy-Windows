@@ -929,6 +929,11 @@ Honest list, short:
   sent on every keystroke — incremental edits are not implemented.
 - **The agent's picture of your project is a snapshot** from when the session
   started. After restructuring a project, start a new conversation.
+- **The Claude backend has not yet talked to Anthropic's live API.** It is
+  tested against recorded streams (thinking, tool calls, refusals, a fallback,
+  errors) and its request bodies are checked model by model, but nobody has
+  run a session with a real key yet. The OpenAI-compatible backend is in the
+  same position for every service except a local test server.
 - **Dictation has not been tried with a real microphone.** The recognizer is
   measured on recordings only; see [Dictation](#dictation). English only, CPU
   only, and built and tested on Windows only.
