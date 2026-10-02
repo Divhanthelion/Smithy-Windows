@@ -305,10 +305,12 @@ You need:
 - On Windows, [Git for Windows](https://git-scm.com/download/win): the agent's
   shell is its bash, found beside `git` on your `PATH` (not WSL's `bash`).
 - For the agent, a model. The simplest is an API key from
-  [OpenRouter](https://openrouter.ai/keys) (it has free models) or
-  [DeepSeek](https://platform.deepseek.com/api_keys): on the first launch
-  Smithy opens its setup dialog, you paste the key and pick a model. Or run your
-  own: [LM Studio](https://lmstudio.ai), or any OpenAI-compatible server such as
+  [Anthropic](https://console.anthropic.com) (Claude),
+  [OpenRouter](https://openrouter.ai/keys) (it has free models),
+  [DeepSeek](https://platform.deepseek.com/api_keys), or any OpenAI-compatible
+  service (OpenAI, Groq, Mistral, and so on): on the first launch Smithy opens
+  its setup dialog, you paste the key and pick a model. Or run your own:
+  [LM Studio](https://lmstudio.ai), or any OpenAI-compatible server such as
   vLLM.
 - For [Jev](#turning-it-on), a TypeSafe key (or a Vercel AI Gateway key with paid credits), or
   JevK5 served on your own GPU. Optional for the editor, required for
@@ -369,6 +371,17 @@ ones that cost nothing), and press *Save & reconnect*. The key goes into Windows
 Credential Manager (the macOS Keychain on a Mac), never into a file, and only to
 that provider. The same dialog takes an optional Brave Search key (web search
 for the agent) and an optional Jev key.
+
+**With Claude.** Choose *Claude*, paste an Anthropic API key (from
+console.anthropic.com), save, then pick a model from the list (Claude Opus 5.5
+is the default) and an effort level: how hard it thinks, from *low* to *max*;
+*high* suits most coding. Smithy talks to Anthropic's own Messages API:
+adaptive thinking, prompt caching on every request (an agent resends its
+history each step, so most of a long session is billed at cache rates), and
+Anthropic's server-side fallback when a model declines a request. Claude's
+thinking is kept and sent back exactly as it arrived, so for Claude Smithy
+does not rewrite earlier turns (the trimming of superseded file reads that
+other backends get is off).
 
 **With any OpenAI-compatible service.** Choose *OpenAI-compatible*, click a
 preset (OpenAI, Groq, Mistral, xAI, Together, Fireworks, Gemini) or type any
@@ -443,7 +456,7 @@ environment fills in when you haven't — so an existing `.env` keeps working
 untouched until the first time you press Save.
 
 ```bash
-SMITHY_PROVIDER=openrouter OPENROUTER_API_KEY=sk-or-v1-... OPENROUTER_MODEL=anthropic/claude-3.5-sonnet cargo run -p smithy
+SMITHY_PROVIDER=openrouter OPENROUTER_API_KEY=sk-or-v1-... OPENROUTER_MODEL=anthropic/claude-opus-5.5 cargo run -p smithy
 ```
 
 The model name is matched against what the server actually has loaded, so a
@@ -760,15 +773,17 @@ rest have no UI and are read every time.
 
 | variable | default | what it does |
 |---|---|---|
-| `SMITHY_PROVIDER` ✱ | first key found, else `lmstudio` | `lmstudio`, `openrouter`, `deepseek`, or `compatible` |
+| `SMITHY_PROVIDER` ✱ | first key found, else `lmstudio` | `lmstudio`, `openrouter`, `deepseek`, `compatible`, or `anthropic` |
 | `OPENROUTER_API_KEY` | *(none)* | OpenRouter key, if it isn't in the credential store |
-| `OPENROUTER_MODEL` ✱ | `anthropic/claude-3.5-sonnet` | model ID to use on OpenRouter |
+| `OPENROUTER_MODEL` ✱ | `anthropic/claude-opus-5.5` | model ID to use on OpenRouter |
 | `OPENROUTER_URL` ✱ | `https://openrouter.ai/api/v1` | OpenRouter API base URL |
 | `DEEPSEEK_API_KEY` | *(none)* | DeepSeek key, if it isn't in the credential store |
 | `DEEPSEEK_MODEL` ✱ | `deepseek-v4-flash` | model ID to use on DeepSeek |
 | `DEEPSEEK_URL` ✱ | `https://api.deepseek.com` | DeepSeek API base URL |
 | `OPENAI_BASE_URL` / `OPENAI_MODEL` ✱ | `https://api.openai.com/v1` / *(none)* | the OpenAI-compatible backend's address and model |
 | `OPENAI_API_KEY` | *(none)* | key for `api.openai.com` only, if none is stored for it; never sent to another address |
+| `ANTHROPIC_API_KEY` | *(none)* | Anthropic key for Claude, if it isn't in the credential store |
+| `ANTHROPIC_MODEL` ✱ | `claude-opus-5-5` | the Claude model |
 | `LMSTUDIO_URL` ✱ | `http://localhost:1234/v1` | LM Studio endpoint |
 | `LMSTUDIO_MODEL` ✱ | `qwen3.6-27b` | LM Studio model name to ask for |
 | `BRAVE_API_KEY` | *(none)* | Brave Search key, if it isn't in the credential store. Absent means no `web_search` tool |

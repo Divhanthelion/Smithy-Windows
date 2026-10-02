@@ -37,7 +37,7 @@ use crate::theme::catppuccin;
 /// Mirrors `smithy_agent::ProviderChoice` by value rather than by type, for the
 /// reason in the module docs. The tags are that enum's serialized form, so the
 /// app's translation is a string match and not a lookup table.
-pub const PROVIDERS: [(&str, &str, &str); 4] = [
+pub const PROVIDERS: [(&str, &str, &str); 5] = [
     (
         "lmstudio",
         "Your own server",
@@ -58,7 +58,16 @@ pub const PROVIDERS: [(&str, &str, &str); 4] = [
         "OpenAI-compatible",
         "OpenAI, Groq, Mistral, xAI, Together, Gemini, or any service with the same API.",
     ),
+    (
+        "anthropic",
+        "Claude",
+        "Anthropic's own API: Opus, Sonnet and Haiku, with thinking and prompt caching.",
+    ),
 ];
+
+/// Claude's effort levels, least to most. More effort thinks longer and
+/// costs more; `high` is the default for coding.
+pub const CLAUDE_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// Quick fills for the OpenAI-compatible backend's address: label, base URL.
 /// Any other address can be typed.
@@ -111,6 +120,10 @@ pub struct SettingsState {
     pub deepseek_model: RwSignal<String>,
     pub compatible_url: RwSignal<String>,
     pub compatible_model: RwSignal<String>,
+    pub anthropic_url: RwSignal<String>,
+    pub anthropic_model: RwSignal<String>,
+    /// One of [`CLAUDE_EFFORTS`].
+    pub anthropic_effort: RwSignal<String>,
     /// A *newly typed* key. Empty means "leave the stored one alone" — see the
     /// module docs on why this is never seeded from storage.
     pub openrouter_key: RwSignal<String>,
@@ -118,6 +131,7 @@ pub struct SettingsState {
     /// The key for the OpenAI-compatible address currently in the form; the
     /// app files it under that address's host.
     pub compatible_key: RwSignal<String>,
+    pub anthropic_key: RwSignal<String>,
     pub brave_key: RwSignal<String>,
     /// Which Jev service: `"typesafe"`, `"gateway"` or `"custom"`.
     pub jev_service: RwSignal<String>,
@@ -136,6 +150,7 @@ pub struct SettingsState {
     /// Whether a key is stored for the host in `compatible_url`; the app keeps
     /// this current as the address changes.
     pub compatible_key_stored: RwSignal<bool>,
+    pub anthropic_key_stored: RwSignal<bool>,
     pub brave_key_stored: RwSignal<bool>,
     pub typesafe_key_stored: RwSignal<bool>,
     pub jev_key_stored: RwSignal<bool>,
@@ -187,9 +202,13 @@ impl SettingsState {
             deepseek_model: RwSignal::new(String::new()),
             compatible_url: RwSignal::new(String::new()),
             compatible_model: RwSignal::new(String::new()),
+            anthropic_url: RwSignal::new(String::new()),
+            anthropic_model: RwSignal::new(String::new()),
+            anthropic_effort: RwSignal::new("high".to_string()),
             openrouter_key: RwSignal::new(String::new()),
             deepseek_key: RwSignal::new(String::new()),
             compatible_key: RwSignal::new(String::new()),
+            anthropic_key: RwSignal::new(String::new()),
             brave_key: RwSignal::new(String::new()),
             jev_service: RwSignal::new("typesafe".to_string()),
             jev_custom_url: RwSignal::new(String::new()),
@@ -200,6 +219,7 @@ impl SettingsState {
             openrouter_key_stored: RwSignal::new(false),
             deepseek_key_stored: RwSignal::new(false),
             compatible_key_stored: RwSignal::new(false),
+            anthropic_key_stored: RwSignal::new(false),
             brave_key_stored: RwSignal::new(false),
             typesafe_key_stored: RwSignal::new(false),
             jev_key_stored: RwSignal::new(false),
@@ -228,6 +248,7 @@ impl SettingsState {
             "openrouter" => self.openrouter_model,
             "deepseek" => self.deepseek_model,
             "compatible" => self.compatible_model,
+            "anthropic" => self.anthropic_model,
             _ => self.lmstudio_model,
         }
     }
@@ -238,6 +259,7 @@ impl SettingsState {
             "openrouter" => self.openrouter_url,
             "deepseek" => self.deepseek_url,
             "compatible" => self.compatible_url,
+            "anthropic" => self.anthropic_url,
             _ => self.lmstudio_url,
         }
     }
@@ -272,6 +294,7 @@ impl SettingsState {
         self.openrouter_key.set(String::new());
         self.deepseek_key.set(String::new());
         self.compatible_key.set(String::new());
+        self.anthropic_key.set(String::new());
         self.brave_key.set(String::new());
         self.typesafe_key.set(String::new());
         self.jev_key.set(String::new());
@@ -388,7 +411,8 @@ fn panel(
             provider_row(state, 0, refresh_for_switch.clone()),
             provider_row(state, 1, refresh_for_switch.clone()),
             provider_row(state, 2, refresh_for_switch.clone()),
-            provider_row(state, 3, refresh_for_switch),
+            provider_row(state, 3, refresh_for_switch.clone()),
+            provider_row(state, 4, refresh_for_switch),
         ))
         .style(|s| s.width_full().gap(6.0).margin_bottom(14.0)),
         // Only the selected backend's fields, because a form showing settings
@@ -405,6 +429,7 @@ fn panel(
                     refresh_for_preset.clone(),
                 )
                 .into_any(),
+                "anthropic" => anthropic_fields(state, clear_for_provider.clone()).into_any(),
                 _ => lmstudio_fields(state).into_any(),
             },
         ),
@@ -434,10 +459,11 @@ fn panel(
         }),
         Label::derived(move || {
             if state.welcome.get() {
-                "Choose the model the agent will use. With a hosted one (OpenRouter or DeepSeek) \
-                 you paste your own API key: it is kept in Windows Credential Manager and sent \
-                 only to that provider. OpenRouter has free models to start with. You can change \
-                 this any time under Agent, Backend Settings."
+                "Choose the model the agent will use. With a hosted one (Claude, OpenRouter, \
+                 DeepSeek, or an OpenAI-compatible service such as OpenAI or Groq) you paste your \
+                 own API key: it is kept in Windows Credential Manager and sent only to that \
+                 provider. OpenRouter has free models to start with. You can change this any time \
+                 under Agent, Backend Settings."
                     .to_string()
             } else {
                 "Applies on save — the agent reconnects and starts a fresh session.".to_string()
@@ -884,11 +910,7 @@ fn openrouter_fields(
             state.openrouter_url,
             "https://openrouter.ai/api/v1",
         ),
-        field(
-            "Model",
-            state.openrouter_model,
-            "anthropic/claude-3.5-sonnet",
-        ),
+        field("Model", state.openrouter_model, "anthropic/claude-opus-5.5"),
         secret_field(
             "API key",
             state.openrouter_key,
@@ -1001,6 +1023,50 @@ fn compatible_fields(
             "Any service that speaks OpenAI's Chat Completions API. Each address keeps its own \
              key, so switching services never sends one service's key to another. The model \
              list fills in after the key is saved. Prices are not shown: check your provider.",
+        ),
+    ))
+    .style(|s| s.width_full().gap(10.0))
+}
+
+/// Claude: key, model (from Anthropic's list), and how hard it thinks.
+fn anthropic_fields(
+    state: SettingsState,
+    on_clear_key: std::rc::Rc<dyn Fn(&str)>,
+) -> impl IntoView {
+    let efforts = Stack::horizontal(
+        CLAUDE_EFFORTS
+            .iter()
+            .map(|&level| service_chip(state.anthropic_effort, (level, level)))
+            .collect::<Vec<_>>(),
+    )
+    .style(|s| s.gap(6.0));
+
+    Stack::vertical((
+        secret_field(
+            "Anthropic API key",
+            state.anthropic_key,
+            state.anthropic_key_stored,
+            "anthropic-api-key",
+            on_clear_key,
+        ),
+        field("Model", state.anthropic_model, "claude-opus-5-5"),
+        Stack::vertical((
+            Label::derived(|| "Effort".to_string()).style(|s| {
+                s.font_size(11.0)
+                    .color(catppuccin::SUBTEXT0)
+                    .margin_bottom(4.0)
+            }),
+            efforts,
+        )),
+        field(
+            "API base URL",
+            state.anthropic_url,
+            "https://api.anthropic.com/v1",
+        ),
+        hint(
+            "Create a key at console.anthropic.com. Effort is how hard Claude thinks: more is \
+             slower and costs more; high suits most coding. The model list fills in after the \
+             key is saved. Prompt caching is on, so a long session pays mostly cache rates.",
         ),
     ))
     .style(|s| s.width_full().gap(10.0))
@@ -1303,6 +1369,8 @@ mod tests {
         assert_eq!(PROVIDERS[1].0, "openrouter");
         assert_eq!(PROVIDERS[2].0, "deepseek");
         assert_eq!(PROVIDERS[3].0, "compatible");
+        assert_eq!(PROVIDERS[4].0, "anthropic");
+        assert!(CLAUDE_EFFORTS.contains(&"high"));
         for (tag, _) in JEV_SERVICES {
             assert!(["typesafe", "gateway", "custom"].contains(&tag));
         }

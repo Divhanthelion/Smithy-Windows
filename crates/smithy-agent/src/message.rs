@@ -58,6 +58,17 @@ pub struct Message {
     /// this field is only the round-trip, not the Session's reasoning log.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub reasoning: String,
+    /// The provider's own content blocks for this assistant turn, exactly as
+    /// they arrived: Anthropic's `thinking` (with its signature), `text`,
+    /// `tool_use` and `fallback` blocks, in order. Empty for every other
+    /// provider.
+    ///
+    /// Claude's thinking blocks must go back byte for byte, in the place they
+    /// were produced: a block whose signature or surroundings changed is
+    /// rejected (or dropped) by the API. So they are kept here rather than
+    /// rebuilt from `content` / `tool_calls`, which other providers use.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_blocks: Vec<Value>,
 }
 
 impl Message {
@@ -69,6 +80,7 @@ impl Message {
             tool_call_id: None,
             tool_name: None,
             reasoning: String::new(),
+            provider_blocks: Vec::new(),
         }
     }
 
@@ -97,6 +109,12 @@ impl Message {
         self
     }
 
+    /// Attach the provider's own content blocks. See [`Message::provider_blocks`].
+    pub fn with_provider_blocks(mut self, blocks: Vec<Value>) -> Message {
+        self.provider_blocks = blocks;
+        self
+    }
+
     /// A tool result, correlated to the call it answers.
     ///
     /// coda wrapped results in `<tool_response>` tags on a `user` message and
@@ -112,6 +130,7 @@ impl Message {
             tool_call_id: Some(result.tool_call_id.clone()),
             tool_name: Some(result.name.clone()),
             reasoning: String::new(),
+            provider_blocks: Vec::new(),
         }
     }
 

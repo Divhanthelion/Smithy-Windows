@@ -135,6 +135,10 @@ pub struct Completion {
     /// the default zero and is indistinguishable from a miss until a later
     /// frame reports a positive count.
     pub cached_tokens: i64,
+    /// The provider's own content blocks, for providers that need them back
+    /// verbatim (Anthropic). Stored on the assistant message; see
+    /// [`crate::message::Message::provider_blocks`].
+    pub provider_blocks: Vec<Value>,
 }
 
 impl Completion {

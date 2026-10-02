@@ -11,14 +11,14 @@ Smithy
 ## Short description
 
 A fast, lightweight code editor with an AI agent that uses the model you
-choose. Bring your own API key (OpenAI, OpenRouter, DeepSeek, Groq, Mistral,
+choose. Bring your own API key (Claude, OpenAI, OpenRouter, DeepSeek, Groq, Mistral,
 xAI and more) or point it at your own model server. Your keys stay in Windows Credential Manager.
 
 ## Description
 
 Smithy is a code editor built around an AI coding agent that you control.
 
-You choose the model. Paste an API key for OpenRouter (hundreds of models,
+You choose the model. Paste an API key for Claude (Anthropic), OpenRouter (hundreds of models,
 including free ones), DeepSeek, or any service with an OpenAI-compatible API:
 OpenAI, Groq, Mistral, xAI, Together, Fireworks, Gemini, or one you name. Or
 point Smithy at a model server you run yourself, such as LM Studio or vLLM. Keys are kept in Windows Credential
@@ -49,7 +49,7 @@ Smithy is open source: https://github.com/Divhanthelion/Smithy-Windows
 
 ## Features
 
-- Bring your own model: OpenAI, OpenRouter, DeepSeek, Groq, Mistral, xAI, Gemini, or your own server
+- Bring your own model: Claude, OpenAI, OpenRouter, DeepSeek, Groq, Mistral, xAI, Gemini, or your own server
 - Choose your own Jev: TypeSafe, the Vercel AI Gateway, or a model on your own GPU
 - API keys kept in Windows Credential Manager, sent only to their provider
 - An AI agent that reads, searches, edits, builds and tests your project

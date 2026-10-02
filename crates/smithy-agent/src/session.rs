@@ -886,15 +886,19 @@ impl Session {
                             .await
                         {
                             answer_nudges += 1;
-                            self.history
-                                .push(Message::assistant(completion.content.clone()));
+                            self.history.push(
+                                Message::assistant(completion.content.clone())
+                                    .with_provider_blocks(completion.provider_blocks.clone()),
+                            );
                             self.push_nudge(nudge, events);
                             continue;
                         }
                     }
 
-                    self.history
-                        .push(Message::assistant(completion.content.clone()));
+                    self.history.push(
+                        Message::assistant(completion.content.clone())
+                            .with_provider_blocks(completion.provider_blocks.clone()),
+                    );
                     return Ok(Outcome::Answer(answer));
                 }
 
@@ -912,8 +916,13 @@ impl Session {
                             "gave up after {consecutive_failures} consecutive malformed tool calls"
                         )));
                     }
-                    self.history
-                        .push(Message::assistant(completion.content.clone()));
+                    // The blocks go too (minus any tool call this turn will
+                    // not answer, which the provider leaves out when it
+                    // sends them back).
+                    self.history.push(
+                        Message::assistant(completion.content.clone())
+                            .with_provider_blocks(completion.provider_blocks.clone()),
+                    );
                     let mut note = format!(
                         "Your previous message could not be parsed as a tool call: {err}\n\
                          Re-issue it as a single structured function call."
@@ -929,7 +938,8 @@ impl Session {
                     consecutive_failures = 0;
                     self.history.push(
                         Message::assistant_with_calls(completion.content.clone(), calls.clone())
-                            .with_reasoning(completion.reasoning.clone()),
+                            .with_reasoning(completion.reasoning.clone())
+                            .with_provider_blocks(completion.provider_blocks.clone()),
                     );
                     for (i, call) in calls.iter().enumerate() {
                         // Checkpoint 3. The assistant message announcing these

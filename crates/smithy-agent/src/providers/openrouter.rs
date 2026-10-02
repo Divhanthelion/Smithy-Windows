@@ -48,7 +48,7 @@ impl OpenRouter {
 
     /// Read configuration from environment variables:
     /// - `OPENROUTER_API_KEY` (required)
-    /// - `OPENROUTER_MODEL` (defaults to `"anthropic/claude-3.5-sonnet"`)
+    /// - `OPENROUTER_MODEL` (defaults to `"anthropic/claude-opus-5.5"`)
     /// - `OPENROUTER_URL` (defaults to `"https://openrouter.ai/api/v1"`)
     pub fn from_env() -> Result<Self, ProviderError> {
         let api_key = std::env::var("OPENROUTER_API_KEY").map_err(|_| {
@@ -68,7 +68,7 @@ impl OpenRouter {
         let base_url = std::env::var("OPENROUTER_URL")
             .unwrap_or_else(|_| "https://openrouter.ai/api/v1".to_string());
         let model = std::env::var("OPENROUTER_MODEL")
-            .unwrap_or_else(|_| "anthropic/claude-3.5-sonnet".to_string());
+            .unwrap_or_else(|_| "anthropic/claude-opus-5.5".to_string());
 
         OpenRouter::new(base_url, model, api_key)
     }

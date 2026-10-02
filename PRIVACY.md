@@ -24,7 +24,7 @@ Only when you use the feature, and only to the service you configured:
 
 | Feature | Sent to | What is sent |
 |---|---|---|
-| The agent | The model provider you chose (OpenRouter, DeepSeek, an OpenAI-compatible service such as OpenAI or Groq, or your own server) | Your messages, and what the agent reads to answer them: parts of your project's files, command output, search results. This is the provider's data under its own privacy policy. |
+| The agent | The model provider you chose (Anthropic for Claude, OpenRouter, DeepSeek, an OpenAI-compatible service such as OpenAI or Groq, or your own server) | Your messages, and what the agent reads to answer them: parts of your project's files, command output, search results. This is the provider's data under its own privacy policy. |
 | Jev checks (optional) | The Jev service you chose: TypeSafe directly, TypeSafe through the Vercel AI Gateway, or a server you name | Short excerpts: your request, the last few tool calls and results, a proposed shell command, an answer; in an unattended Run, task titles, test output and research notes. Never a whole conversation or a whole file. |
 | Web search (optional) | Brave Search | The search query the agent writes. |
 | Web fetch | The website at the address | An ordinary request for that page. |

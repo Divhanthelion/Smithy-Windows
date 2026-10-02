@@ -1,5 +1,9 @@
 //! Terminal Session. Same agent loop as the editor; the Harness is files.
 
+// `double_must_use` (clippy 1.99) fires on the boxed futures `async_trait`
+// generates for every async trait method, not on anything written here.
+#![allow(clippy::double_must_use)]
+
 mod args;
 mod boot;
 mod hooks;

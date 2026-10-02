@@ -324,6 +324,10 @@ fn price_of(provider: smithy_agent::ProviderChoice, model: &str) -> Option<(f64,
         smithy_agent::ProviderChoice::OpenRouter => None,
         // Compatible services publish no prices in a common form.
         smithy_agent::ProviderChoice::Compatible => None,
+        // Anthropic's list prices, cache reads included, from a snapshot.
+        smithy_agent::ProviderChoice::Anthropic => {
+            smithy_agent::providers::anthropic::pricing_for(model)
+        }
     }
 }
 

@@ -22,8 +22,8 @@ use std::path::Path;
 use floem::reactive::{SignalGet, SignalUpdate};
 use smithy_agent::catalogue;
 use smithy_agent::config::{
-    compatible_api_key, compatible_key_account, secrets, JevConfig, JevService, BRAVE_KEY,
-    DEEPSEEK_KEY, JEV_CUSTOM_KEY, OPENROUTER_KEY, TYPESAFE_KEY,
+    compatible_api_key, compatible_key_account, secrets, JevConfig, JevService, ANTHROPIC_KEY,
+    BRAVE_KEY, DEEPSEEK_KEY, JEV_CUSTOM_KEY, OPENROUTER_KEY, TYPESAFE_KEY,
 };
 use smithy_agent::jev::AI_GATEWAY_KEY;
 use smithy_agent::{AgentConfig, ProviderChoice};
@@ -82,11 +82,13 @@ fn is_first_run(data_dir: &Path) -> bool {
             "OPENROUTER_API_KEY",
             "DEEPSEEK_API_KEY",
             "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
         ]
         .iter()
         .any(|name| set(name))
         && !secrets::is_stored(OPENROUTER_KEY)
         && !secrets::is_stored(DEEPSEEK_KEY)
+        && !secrets::is_stored(ANTHROPIC_KEY)
 }
 
 fn open_with(state: SettingsState, data_dir: &Path, preselect: Option<ProviderChoice>) {
@@ -102,6 +104,12 @@ fn open_with(state: SettingsState, data_dir: &Path, preselect: Option<ProviderCh
     state.deepseek_model.set(config.deepseek.model.clone());
     state.compatible_url.set(config.compatible.base_url.clone());
     state.compatible_model.set(config.compatible.model.clone());
+    state.anthropic_url.set(config.anthropic.base_url.clone());
+    state.anthropic_model.set(config.anthropic.model.clone());
+    state.anthropic_effort.set(config.anthropic_effort.clone());
+    state
+        .anthropic_key_stored
+        .set(secrets::is_stored(ANTHROPIC_KEY));
 
     // Presence from the sidecar, never from the keychain. Reading a stored key
     // just to learn that it exists is what used to cost three password prompts
@@ -325,6 +333,11 @@ pub fn save(state: SettingsState, data_dir: &Path) -> Result<Vec<String>, String
             base_url: trimmed(state.compatible_url.get_untracked()),
             model: trimmed(state.compatible_model.get_untracked()),
         },
+        anthropic: smithy_agent::Endpoint {
+            base_url: trimmed(state.anthropic_url.get_untracked()),
+            model: trimmed(state.anthropic_model.get_untracked()),
+        },
+        anthropic_effort: trimmed(state.anthropic_effort.get_untracked()),
         jev: JevConfig {
             service: JevService::parse(&state.jev_service.get_untracked()),
             custom_url: trimmed(state.jev_custom_url.get_untracked()),
@@ -348,6 +361,7 @@ pub fn save(state: SettingsState, data_dir: &Path) -> Result<Vec<String>, String
     for (account, typed) in [
         (OPENROUTER_KEY, state.openrouter_key.get_untracked()),
         (DEEPSEEK_KEY, state.deepseek_key.get_untracked()),
+        (ANTHROPIC_KEY, state.anthropic_key.get_untracked()),
         (BRAVE_KEY, state.brave_key.get_untracked()),
         (AI_GATEWAY_KEY, state.jev_key.get_untracked()),
         (TYPESAFE_KEY, state.typesafe_key.get_untracked()),
@@ -406,6 +420,7 @@ pub fn clear_key(state: SettingsState, account: &str) {
             match account {
                 OPENROUTER_KEY => state.openrouter_key_stored.set(false),
                 DEEPSEEK_KEY => state.deepseek_key_stored.set(false),
+                ANTHROPIC_KEY => state.anthropic_key_stored.set(false),
                 BRAVE_KEY => state.brave_key_stored.set(false),
                 AI_GATEWAY_KEY => state.jev_key_stored.set(false),
                 TYPESAFE_KEY => state.typesafe_key_stored.set(false),
@@ -465,6 +480,8 @@ mod tests {
             openrouter: blank(),
             deepseek: blank(),
             compatible: blank(),
+            anthropic: blank(),
+            anthropic_effort: "high".into(),
             jev: JevConfig::default(),
         };
         *c.active_mut() = smithy_agent::Endpoint {

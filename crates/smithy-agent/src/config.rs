@@ -60,6 +60,9 @@ pub const GITHUB_PAT: &str = "github-pat";
 /// Credential-store account name for the DeepSeek key.
 pub const DEEPSEEK_KEY: &str = "deepseek-api-key";
 
+/// Credential-store account name for the Anthropic (Claude) key.
+pub const ANTHROPIC_KEY: &str = "anthropic-api-key";
+
 /// Credential-store account for a TypeSafe key, used to reach Jev directly.
 pub const TYPESAFE_KEY: &str = "typesafe-api-key";
 
@@ -188,6 +191,10 @@ impl JevConfig {
     }
 }
 
+fn default_effort() -> String {
+    crate::providers::anthropic::DEFAULT_EFFORT.to_string()
+}
+
 /// `~/.local/share/smithy`: where settings, sessions and Run logs live.
 pub fn default_data_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")
@@ -210,6 +217,8 @@ pub enum ProviderChoice {
     /// Any OpenAI-compatible Chat Completions API, by address: OpenAI, Groq,
     /// Mistral, xAI, Together, Gemini's compatibility endpoint, and so on.
     Compatible,
+    /// Claude, through Anthropic's own Messages API.
+    Anthropic,
 }
 
 impl ProviderChoice {
@@ -222,6 +231,7 @@ impl ProviderChoice {
         ProviderChoice::OpenRouter,
         ProviderChoice::DeepSeek,
         ProviderChoice::Compatible,
+        ProviderChoice::Anthropic,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -230,6 +240,7 @@ impl ProviderChoice {
             ProviderChoice::OpenRouter => "openrouter",
             ProviderChoice::DeepSeek => "deepseek",
             ProviderChoice::Compatible => "compatible",
+            ProviderChoice::Anthropic => "anthropic",
         }
     }
 
@@ -240,6 +251,7 @@ impl ProviderChoice {
             ProviderChoice::OpenRouter => "OpenRouter",
             ProviderChoice::DeepSeek => "DeepSeek",
             ProviderChoice::Compatible => "OpenAI-compatible",
+            ProviderChoice::Anthropic => "Claude",
         }
     }
 
@@ -248,6 +260,7 @@ impl ProviderChoice {
             "lmstudio" | "lm-studio" | "lm_studio" | "local" => Some(ProviderChoice::LmStudio),
             "openrouter" | "open-router" | "open_router" => Some(ProviderChoice::OpenRouter),
             "deepseek" | "deep-seek" | "deep_seek" => Some(ProviderChoice::DeepSeek),
+            "anthropic" | "claude" => Some(ProviderChoice::Anthropic),
             "compatible" | "openai-compatible" | "openai_compatible" => {
                 Some(ProviderChoice::Compatible)
             }
@@ -263,7 +276,10 @@ impl ProviderChoice {
     /// OpenAI-compatible address may be a server on your own network with no
     /// key at all, so it is not refused for want of one.
     pub fn needs_api_key(self) -> bool {
-        matches!(self, ProviderChoice::OpenRouter | ProviderChoice::DeepSeek)
+        matches!(
+            self,
+            ProviderChoice::OpenRouter | ProviderChoice::DeepSeek | ProviderChoice::Anthropic
+        )
     }
 
     /// Where this backend's key lives: credential-store account, environment
@@ -275,6 +291,7 @@ impl ProviderChoice {
             ProviderChoice::LmStudio | ProviderChoice::Compatible => None,
             ProviderChoice::OpenRouter => Some((OPENROUTER_KEY, "OPENROUTER_API_KEY")),
             ProviderChoice::DeepSeek => Some((DEEPSEEK_KEY, "DEEPSEEK_API_KEY")),
+            ProviderChoice::Anthropic => Some((ANTHROPIC_KEY, "ANTHROPIC_API_KEY")),
         }
     }
 
@@ -291,6 +308,8 @@ impl ProviderChoice {
     pub fn turn_seconds(self) -> u64 {
         match self {
             ProviderChoice::LmStudio => 3600,
+            // A reply that thinks at high effort can take minutes on its own.
+            ProviderChoice::Anthropic => 1800,
             ProviderChoice::OpenRouter | ProviderChoice::DeepSeek | ProviderChoice::Compatible => {
                 900
             }
@@ -343,7 +362,7 @@ impl Endpoint {
     fn openrouter_default() -> Self {
         Endpoint {
             base_url: "https://openrouter.ai/api/v1".to_string(),
-            model: "anthropic/claude-3.5-sonnet".to_string(),
+            model: "anthropic/claude-opus-5.5".to_string(),
         }
     }
 
@@ -360,6 +379,13 @@ impl Endpoint {
         Endpoint {
             base_url: "https://api.openai.com/v1".to_string(),
             model: String::new(),
+        }
+    }
+
+    pub fn anthropic_default() -> Self {
+        Endpoint {
+            base_url: crate::providers::anthropic::DEFAULT_URL.to_string(),
+            model: crate::providers::anthropic::DEFAULT_MODEL.to_string(),
         }
     }
 }
@@ -386,6 +412,12 @@ pub struct AgentConfig {
     /// The OpenAI-compatible backend's address and model.
     #[serde(default = "Endpoint::compatible_default")]
     pub compatible: Endpoint,
+    /// Claude: Anthropic's address and the model.
+    #[serde(default = "Endpoint::anthropic_default")]
+    pub anthropic: Endpoint,
+    /// How hard Claude thinks: `low`, `medium`, `high`, `xhigh` or `max`.
+    #[serde(default = "default_effort")]
+    pub anthropic_effort: String,
     /// Which Jev to ask, and where.
     pub jev: JevConfig,
 }
@@ -398,6 +430,8 @@ impl Default for AgentConfig {
             openrouter: Endpoint::openrouter_default(),
             deepseek: Endpoint::deepseek_default(),
             compatible: Endpoint::compatible_default(),
+            anthropic: Endpoint::anthropic_default(),
+            anthropic_effort: default_effort(),
             jev: JevConfig::default(),
         }
     }
@@ -466,6 +500,8 @@ impl AgentConfig {
                 ProviderChoice::OpenRouter
             } else if has_key("DEEPSEEK_API_KEY") {
                 ProviderChoice::DeepSeek
+            } else if has_key("ANTHROPIC_API_KEY") {
+                ProviderChoice::Anthropic
             } else {
                 ProviderChoice::LmStudio
             }
@@ -496,6 +532,12 @@ impl AgentConfig {
                     .unwrap_or_else(|_| Endpoint::compatible_default().base_url),
                 model: std::env::var("OPENAI_MODEL").unwrap_or_default(),
             },
+            anthropic: Endpoint {
+                model: std::env::var("ANTHROPIC_MODEL")
+                    .unwrap_or_else(|_| Endpoint::anthropic_default().model),
+                ..Endpoint::anthropic_default()
+            },
+            anthropic_effort: default_effort(),
             jev: JevConfig::default(),
         }
     }
@@ -507,6 +549,7 @@ impl AgentConfig {
             ProviderChoice::OpenRouter => &self.openrouter,
             ProviderChoice::DeepSeek => &self.deepseek,
             ProviderChoice::Compatible => &self.compatible,
+            ProviderChoice::Anthropic => &self.anthropic,
         }
     }
 
@@ -522,6 +565,7 @@ impl AgentConfig {
             ProviderChoice::OpenRouter => &mut self.openrouter,
             ProviderChoice::DeepSeek => &mut self.deepseek,
             ProviderChoice::Compatible => &mut self.compatible,
+            ProviderChoice::Anthropic => &mut self.anthropic,
         }
     }
 
@@ -559,6 +603,15 @@ impl AgentConfig {
                     self.compatible.base_url.clone(),
                     self.compatible.model.clone(),
                     key,
+                )?))
+            }
+            ProviderChoice::Anthropic => {
+                let key = self.require_key(ProviderChoice::Anthropic, "ANTHROPIC_API_KEY")?;
+                Ok(Arc::new(crate::providers::Anthropic::new(
+                    self.anthropic.base_url.clone(),
+                    self.anthropic.model.clone(),
+                    key,
+                    self.anthropic_effort.clone(),
                 )?))
             }
         }
@@ -991,7 +1044,7 @@ mod tests {
     /// would be invisible to the dialog, which iterates it.
     #[test]
     fn every_backend_is_listed_in_all() {
-        assert_eq!(ProviderChoice::ALL.len(), 4);
+        assert_eq!(ProviderChoice::ALL.len(), 5);
         for &choice in ProviderChoice::ALL {
             assert!(!choice.label().is_empty());
             assert!(!choice.as_str().is_empty());
@@ -1091,6 +1144,11 @@ mod tests {
                 base_url: "https://api.groq.com/openai/v1".to_string(),
                 model: "some-model".to_string(),
             },
+            anthropic: Endpoint {
+                model: "claude-sonnet-5-5".to_string(),
+                ..Endpoint::anthropic_default()
+            },
+            anthropic_effort: "xhigh".to_string(),
             jev: JevConfig {
                 service: Some(JevService::Custom),
                 custom_url: "http://my-gpu:8090/v1/systemone".to_string(),
@@ -1110,8 +1168,12 @@ mod tests {
     fn hosted_backends_do_not_share_a_key_slot() {
         let a = ProviderChoice::OpenRouter.key_names().unwrap();
         let b = ProviderChoice::DeepSeek.key_names().unwrap();
+        let c = ProviderChoice::Anthropic.key_names().unwrap();
         assert_ne!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(b, c);
         assert!(ProviderChoice::LmStudio.key_names().is_none());
+        assert!(ProviderChoice::Anthropic.needs_api_key());
     }
 
     /// An OpenAI-compatible key is filed by host: switching the address from

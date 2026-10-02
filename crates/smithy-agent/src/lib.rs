@@ -43,6 +43,10 @@
 //! history is replayed byte-identically rather than re-rendered, so a resumed
 //! session still hits a warm prefix.
 
+// `double_must_use` (clippy 1.99) fires on the boxed futures `async_trait`
+// generates for every async trait method, not on anything written here.
+#![allow(clippy::double_must_use)]
+
 pub mod catalogue;
 pub mod config;
 pub mod explore;

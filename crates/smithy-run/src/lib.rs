@@ -4,6 +4,10 @@
 //! this crate for the decisions and the order of authority the runner keeps:
 //! Checks, then mechanical rules, then Jev, then the model.
 
+// `double_must_use` (clippy 1.99) fires on the boxed futures `async_trait`
+// generates for every async trait method, not on anything written here.
+#![allow(clippy::double_must_use)]
+
 pub mod cheat;
 pub mod check;
 pub mod decisions;

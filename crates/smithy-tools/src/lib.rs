@@ -21,6 +21,10 @@
 //! divcli sketched (but left empty): it is where write review, shell approval,
 //! and security scanning attach without any tool knowing about them.
 
+// `double_must_use` (clippy 1.99) fires on the boxed futures `async_trait`
+// generates for every async trait method, not on anything written here.
+#![allow(clippy::double_must_use)]
+
 pub mod fuzzy;
 pub mod registry;
 pub mod research;

@@ -3,6 +3,10 @@
 //! The entry point: builds the window, wires every panel to the state in
 //! [`app_state`], and owns the shortcuts and the modals that sit above them.
 
+// `double_must_use` (clippy 1.99) fires on the boxed futures `async_trait`
+// generates for every async trait method, not on anything written here.
+#![allow(clippy::double_must_use)]
+
 use floem::peniko::Color;
 use floem::prelude::*;
 

@@ -141,7 +141,84 @@ pub async fn list(
         ProviderChoice::LmStudio => list_lmstudio(&endpoint.base_url).await,
         ProviderChoice::DeepSeek => list_deepseek(&endpoint.base_url, api_key).await,
         ProviderChoice::Compatible => list_compatible(&endpoint.base_url, api_key).await,
+        ProviderChoice::Anthropic => list_anthropic(&endpoint.base_url, api_key).await,
     }
+}
+
+/// Claude's models, from Anthropic's `/v1/models`: id, display name and
+/// context window (`max_input_tokens`). Prices from
+/// [`crate::providers::anthropic::pricing_for`], a snapshot. Newest first, as
+/// the API returns them.
+async fn list_anthropic(base_url: &str, api_key: Option<&str>) -> Result<Vec<ModelEntry>, String> {
+    let Some(key) = api_key.filter(|k| !k.trim().is_empty()) else {
+        return Err(
+            "Claude needs an Anthropic API key before it will list models. Add one, then save."
+                .to_string(),
+        );
+    };
+    let base = base_url.trim_end_matches('/');
+    let mut entries = Vec::new();
+    let mut after: Option<String> = None;
+    // Pages of a thousand; a handful of pages at most, so a bound is cheap
+    // insurance against a server that never says it is done.
+    for _ in 0..10 {
+        let mut request = client(20)?
+            .get(format!("{base}/models"))
+            .query(&[("limit", "1000")])
+            .header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01");
+        if let Some(id) = &after {
+            request = request.query(&[("after_id", id.as_str())]);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("could not reach Anthropic: {e}"))?;
+        let status = response.status().as_u16();
+        if status == 401 || status == 403 {
+            return Err("Anthropic rejected the API key.".to_string());
+        }
+        if !(200..300).contains(&status) {
+            return Err(format!(
+                "Anthropic returned HTTP {status} when listing models"
+            ));
+        }
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("could not parse Anthropic's model list: {e}"))?;
+        let data = body["data"]
+            .as_array()
+            .ok_or("Anthropic's model list had no `data` array")?;
+        entries.extend(parse_anthropic_models(data));
+        match (body["has_more"].as_bool(), body["last_id"].as_str()) {
+            (Some(true), Some(last)) => after = Some(last.to_string()),
+            _ => break,
+        }
+    }
+    Ok(entries)
+}
+
+fn parse_anthropic_models(data: &[serde_json::Value]) -> Vec<ModelEntry> {
+    data.iter()
+        .filter_map(|model| {
+            let id = model["id"].as_str()?.to_string();
+            let tier = match crate::providers::anthropic::pricing_for(&id) {
+                Some((input, output, _)) => ModelTier::Paid {
+                    prompt_per_mtok: input,
+                    completion_per_mtok: output,
+                },
+                None => ModelTier::Unpriced,
+            };
+            Some(ModelEntry {
+                label: model["display_name"].as_str().unwrap_or(&id).to_string(),
+                context_length: model["max_input_tokens"].as_i64(),
+                tool_capable: true,
+                tier,
+                id,
+            })
+        })
+        .collect()
 }
 
 /// An OpenAI-compatible service's `/models`: ids, and a context window when
@@ -635,6 +712,25 @@ fn truncate(text: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // --- Claude ---
+
+    #[test]
+    fn claudes_model_list_carries_the_context_window_and_the_price() {
+        let data = [
+            json!({"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5", "max_input_tokens": 1000000}),
+            json!({"id": "claude-future-9", "display_name": "Claude Future 9"}),
+        ];
+        let entries = parse_anthropic_models(&data);
+        assert_eq!(entries[0].label, "Claude Opus 5.5");
+        assert_eq!(entries[0].context_length, Some(1_000_000));
+        assert_eq!(entries[0].badge(), "$4.00/$20.00 per M");
+        assert_eq!(
+            entries[1].tier,
+            ModelTier::Unpriced,
+            "an unknown model is not priced by guess"
+        );
+    }
 
     // --- OpenAI-compatible ---
 

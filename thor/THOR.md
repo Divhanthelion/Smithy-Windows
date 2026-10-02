@@ -124,7 +124,7 @@ cat > ~/.local/share/smithy/provider.json <<'EOF'
 {
   "provider": "lmstudio",
   "lmstudio": { "base_url": "http://localhost:8000/v1", "model": "qwen3.8-flash-next" },
-  "openrouter": { "base_url": "https://openrouter.ai/api/v1", "model": "anthropic/claude-3.5-sonnet" },
+  "openrouter": { "base_url": "https://openrouter.ai/api/v1", "model": "anthropic/claude-opus-5.5" },
   "deepseek": { "base_url": "https://api.deepseek.com", "model": "deepseek-v4-flash" }
 }
 EOF
