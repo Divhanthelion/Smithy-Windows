@@ -322,6 +322,8 @@ fn price_of(provider: smithy_agent::ProviderChoice, model: &str) -> Option<(f64,
         // uninformative; tokens are the useful figure.
         smithy_agent::ProviderChoice::LmStudio => None,
         smithy_agent::ProviderChoice::OpenRouter => None,
+        // Compatible services publish no prices in a common form.
+        smithy_agent::ProviderChoice::Compatible => None,
     }
 }
 

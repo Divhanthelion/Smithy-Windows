@@ -37,11 +37,11 @@ use crate::theme::catppuccin;
 /// Mirrors `smithy_agent::ProviderChoice` by value rather than by type, for the
 /// reason in the module docs. The tags are that enum's serialized form, so the
 /// app's translation is a string match and not a lookup table.
-pub const PROVIDERS: [(&str, &str, &str); 3] = [
+pub const PROVIDERS: [(&str, &str, &str); 4] = [
     (
         "lmstudio",
         "Your own server",
-        "LM Studio, vLLM, or any OpenAI-compatible server you run. No key needed.",
+        "LM Studio or vLLM, on this machine or your network. No key needed.",
     ),
     (
         "openrouter",
@@ -52,6 +52,26 @@ pub const PROVIDERS: [(&str, &str, &str); 3] = [
         "deepseek",
         "DeepSeek",
         "DeepSeek's own API — 1M context, cheap, tool-capable.",
+    ),
+    (
+        "compatible",
+        "OpenAI-compatible",
+        "OpenAI, Groq, Mistral, xAI, Together, Gemini, or any service with the same API.",
+    ),
+];
+
+/// Quick fills for the OpenAI-compatible backend's address: label, base URL.
+/// Any other address can be typed.
+pub const COMPATIBLE_PRESETS: [(&str, &str); 7] = [
+    ("OpenAI", "https://api.openai.com/v1"),
+    ("Groq", "https://api.groq.com/openai/v1"),
+    ("Mistral", "https://api.mistral.ai/v1"),
+    ("xAI", "https://api.x.ai/v1"),
+    ("Together", "https://api.together.xyz/v1"),
+    ("Fireworks", "https://api.fireworks.ai/inference/v1"),
+    (
+        "Gemini",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
     ),
 ];
 
@@ -89,10 +109,15 @@ pub struct SettingsState {
     pub openrouter_model: RwSignal<String>,
     pub deepseek_url: RwSignal<String>,
     pub deepseek_model: RwSignal<String>,
+    pub compatible_url: RwSignal<String>,
+    pub compatible_model: RwSignal<String>,
     /// A *newly typed* key. Empty means "leave the stored one alone" — see the
     /// module docs on why this is never seeded from storage.
     pub openrouter_key: RwSignal<String>,
     pub deepseek_key: RwSignal<String>,
+    /// The key for the OpenAI-compatible address currently in the form; the
+    /// app files it under that address's host.
+    pub compatible_key: RwSignal<String>,
     pub brave_key: RwSignal<String>,
     /// Which Jev service: `"typesafe"`, `"gateway"` or `"custom"`.
     pub jev_service: RwSignal<String>,
@@ -108,6 +133,9 @@ pub struct SettingsState {
     /// and whether "Remove" is offered, without revealing the value.
     pub openrouter_key_stored: RwSignal<bool>,
     pub deepseek_key_stored: RwSignal<bool>,
+    /// Whether a key is stored for the host in `compatible_url`; the app keeps
+    /// this current as the address changes.
+    pub compatible_key_stored: RwSignal<bool>,
     pub brave_key_stored: RwSignal<bool>,
     pub typesafe_key_stored: RwSignal<bool>,
     pub jev_key_stored: RwSignal<bool>,
@@ -157,8 +185,11 @@ impl SettingsState {
             openrouter_model: RwSignal::new(String::new()),
             deepseek_url: RwSignal::new(String::new()),
             deepseek_model: RwSignal::new(String::new()),
+            compatible_url: RwSignal::new(String::new()),
+            compatible_model: RwSignal::new(String::new()),
             openrouter_key: RwSignal::new(String::new()),
             deepseek_key: RwSignal::new(String::new()),
+            compatible_key: RwSignal::new(String::new()),
             brave_key: RwSignal::new(String::new()),
             jev_service: RwSignal::new("typesafe".to_string()),
             jev_custom_url: RwSignal::new(String::new()),
@@ -168,6 +199,7 @@ impl SettingsState {
             jev_custom_key: RwSignal::new(String::new()),
             openrouter_key_stored: RwSignal::new(false),
             deepseek_key_stored: RwSignal::new(false),
+            compatible_key_stored: RwSignal::new(false),
             brave_key_stored: RwSignal::new(false),
             typesafe_key_stored: RwSignal::new(false),
             jev_key_stored: RwSignal::new(false),
@@ -195,6 +227,7 @@ impl SettingsState {
         match self.provider.get_untracked().as_str() {
             "openrouter" => self.openrouter_model,
             "deepseek" => self.deepseek_model,
+            "compatible" => self.compatible_model,
             _ => self.lmstudio_model,
         }
     }
@@ -204,6 +237,7 @@ impl SettingsState {
         match self.provider.get_untracked().as_str() {
             "openrouter" => self.openrouter_url,
             "deepseek" => self.deepseek_url,
+            "compatible" => self.compatible_url,
             _ => self.lmstudio_url,
         }
     }
@@ -237,6 +271,7 @@ impl SettingsState {
     pub fn forget_typed_secrets(&self) {
         self.openrouter_key.set(String::new());
         self.deepseek_key.set(String::new());
+        self.compatible_key.set(String::new());
         self.brave_key.set(String::new());
         self.typesafe_key.set(String::new());
         self.jev_key.set(String::new());
@@ -343,6 +378,7 @@ fn panel(
     let save = on_save.clone();
     let clear_for_provider = on_clear_key.clone();
     let refresh_for_switch = on_refresh_models.clone();
+    let refresh_for_preset = on_refresh_models.clone();
 
     let body = Stack::vertical((
         // The choice itself. Switching refetches, because the list belongs to
@@ -351,7 +387,8 @@ fn panel(
         Stack::vertical((
             provider_row(state, 0, refresh_for_switch.clone()),
             provider_row(state, 1, refresh_for_switch.clone()),
-            provider_row(state, 2, refresh_for_switch),
+            provider_row(state, 2, refresh_for_switch.clone()),
+            provider_row(state, 3, refresh_for_switch),
         ))
         .style(|s| s.width_full().gap(6.0).margin_bottom(14.0)),
         // Only the selected backend's fields, because a form showing settings
@@ -362,6 +399,12 @@ fn panel(
             move |choice| match choice.as_str() {
                 "openrouter" => openrouter_fields(state, clear_for_provider.clone()).into_any(),
                 "deepseek" => deepseek_fields(state, clear_for_provider.clone()).into_any(),
+                "compatible" => compatible_fields(
+                    state,
+                    clear_for_provider.clone(),
+                    refresh_for_preset.clone(),
+                )
+                .into_any(),
                 _ => lmstudio_fields(state).into_any(),
             },
         ),
@@ -881,6 +924,88 @@ fn deepseek_fields(state: SettingsState, on_clear_key: std::rc::Rc<dyn Fn(&str)>
     .style(|s| s.width_full().gap(10.0))
 }
 
+/// The OpenAI-compatible backend: an address (typed, or filled from a preset),
+/// a model, and the key for that address.
+///
+/// The "Remove" button passes the account `openai-compatible-api-key`; the app
+/// resolves it to the key filed under the current address's host, because
+/// this crate does not know how keys are filed.
+fn compatible_fields(
+    state: SettingsState,
+    on_clear_key: std::rc::Rc<dyn Fn(&str)>,
+    on_refresh_models: std::rc::Rc<dyn Fn()>,
+) -> impl IntoView {
+    let presets = Stack::horizontal(
+        COMPATIBLE_PRESETS
+            .iter()
+            .map(|&(label, url)| {
+                let refresh = on_refresh_models.clone();
+                Label::derived(move || label.to_string())
+                    .on_event_stop(floem::event::listener::Click, move |_, _| {
+                        if state.compatible_url.get_untracked() == url {
+                            return;
+                        }
+                        state.compatible_url.set(url.to_string());
+                        // Model ids belong to a service; the old one would be
+                        // sent to the new address and refused.
+                        state.compatible_model.set(String::new());
+                        state.models.set(Vec::new());
+                        state.models_error.set(String::new());
+                        refresh();
+                    })
+                    .style(move |s| {
+                        let on = state.compatible_url.get() == url;
+                        s.font_size(11.0)
+                            .padding_horiz(9.0)
+                            .padding_vert(4.0)
+                            .border_radius(5.0)
+                            .cursor(floem::style::CursorStyle::Pointer)
+                            .border(1.0)
+                            .border_color(if on {
+                                catppuccin::LAVENDER
+                            } else {
+                                catppuccin::SURFACE0
+                            })
+                            .background(if on {
+                                catppuccin::SURFACE0
+                            } else {
+                                catppuccin::CRUST
+                            })
+                            .color(if on {
+                                catppuccin::TEXT
+                            } else {
+                                catppuccin::SUBTEXT0
+                            })
+                    })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .style(|s| s.flex_wrap(floem::style::FlexWrap::Wrap).gap(6.0));
+
+    Stack::vertical((
+        presets,
+        field(
+            "API base URL",
+            state.compatible_url,
+            "https://api.openai.com/v1",
+        ),
+        field("Model", state.compatible_model, "pick one below"),
+        secret_field(
+            "API key for this address",
+            state.compatible_key,
+            state.compatible_key_stored,
+            "openai-compatible-api-key",
+            on_clear_key,
+        ),
+        hint(
+            "Any service that speaks OpenAI's Chat Completions API. Each address keeps its own \
+             key, so switching services never sends one service's key to another. The model \
+             list fills in after the key is saved. Prices are not shown: check your provider.",
+        ),
+    ))
+    .style(|s| s.width_full().gap(10.0))
+}
+
 fn brave_fields(state: SettingsState, on_clear_key: std::rc::Rc<dyn Fn(&str)>) -> impl IntoView {
     Stack::vertical((
         secret_field(
@@ -1176,6 +1301,21 @@ mod tests {
     fn provider_tags_are_the_serialized_names() {
         assert_eq!(PROVIDERS[0].0, "lmstudio");
         assert_eq!(PROVIDERS[1].0, "openrouter");
+        assert_eq!(PROVIDERS[2].0, "deepseek");
+        assert_eq!(PROVIDERS[3].0, "compatible");
+        for (tag, _) in JEV_SERVICES {
+            assert!(["typesafe", "gateway", "custom"].contains(&tag));
+        }
+    }
+
+    /// A preset is an API base, ready for `/models` and `/chat/completions`
+    /// to be appended: https, and no trailing slash.
+    #[test]
+    fn every_compatible_preset_is_an_https_base_without_a_trailing_slash() {
+        for (label, url) in COMPATIBLE_PRESETS {
+            assert!(url.starts_with("https://"), "{label}: {url}");
+            assert!(!url.ends_with('/'), "{label}: {url}");
+        }
     }
 
     #[test]

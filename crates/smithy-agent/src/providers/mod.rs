@@ -1,6 +1,7 @@
 //! Backend implementations of [`crate::Provider`].
 //!
-//! Supports local endpoints (LM Studio) and cloud endpoints (OpenRouter).
+//! Supports local endpoints (LM Studio), cloud endpoints (OpenRouter, DeepSeek),
+//! and any OpenAI-compatible API by address (`compatible`).
 //!
 //! **Selection does not live here.** It lives in [`crate::config`], which reads
 //! a settings file the UI writes and falls back to the environment when there is
@@ -11,11 +12,13 @@ use std::sync::Arc;
 use crate::config::AgentConfig;
 use crate::provider::{Provider, ProviderError};
 
+pub mod compatible;
 pub mod deepseek;
 pub mod lmstudio;
 pub mod openrouter;
 pub mod sse;
 
+pub use compatible::Compatible;
 pub use deepseek::DeepSeek;
 pub use lmstudio::{LmStudio, ModelInfo};
 pub use openrouter::OpenRouter;

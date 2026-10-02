@@ -22,12 +22,28 @@ use std::path::Path;
 use floem::reactive::{SignalGet, SignalUpdate};
 use smithy_agent::catalogue;
 use smithy_agent::config::{
-    secrets, JevConfig, JevService, BRAVE_KEY, DEEPSEEK_KEY, JEV_CUSTOM_KEY, OPENROUTER_KEY,
-    TYPESAFE_KEY,
+    compatible_api_key, compatible_key_account, secrets, JevConfig, JevService, BRAVE_KEY,
+    DEEPSEEK_KEY, JEV_CUSTOM_KEY, OPENROUTER_KEY, TYPESAFE_KEY,
 };
 use smithy_agent::jev::AI_GATEWAY_KEY;
 use smithy_agent::{AgentConfig, ProviderChoice};
 use smithy_editor::{ModelRow, SettingsState};
+
+/// What the dialog calls the OpenAI-compatible key. Not a real account: the
+/// key is filed per host ([`compatible_key_account`]).
+const COMPATIBLE_KEY_FIELD: &str = "openai-compatible-api-key";
+
+/// Keep "a key is saved" true to the address in the OpenAI-compatible form,
+/// as it is typed or picked from a preset. Called once, when the dialog's
+/// state is created.
+pub fn watch_compatible_key(state: SettingsState) {
+    floem::reactive::Effect::new(move |_| {
+        let url = state.compatible_url.get();
+        state
+            .compatible_key_stored
+            .set(!url.trim().is_empty() && secrets::is_stored(&compatible_key_account(&url)));
+    });
+}
 
 /// Populate the dialog from disk and show it.
 ///
@@ -65,6 +81,7 @@ fn is_first_run(data_dir: &Path) -> bool {
             "LMSTUDIO_URL",
             "OPENROUTER_API_KEY",
             "DEEPSEEK_API_KEY",
+            "OPENAI_API_KEY",
         ]
         .iter()
         .any(|name| set(name))
@@ -83,6 +100,8 @@ fn open_with(state: SettingsState, data_dir: &Path, preselect: Option<ProviderCh
     state.openrouter_model.set(config.openrouter.model.clone());
     state.deepseek_url.set(config.deepseek.base_url.clone());
     state.deepseek_model.set(config.deepseek.model.clone());
+    state.compatible_url.set(config.compatible.base_url.clone());
+    state.compatible_model.set(config.compatible.model.clone());
 
     // Presence from the sidecar, never from the keychain. Reading a stored key
     // just to learn that it exists is what used to cost three password prompts
@@ -157,10 +176,15 @@ pub fn refresh_models(state: SettingsState, data_dir: &Path) {
         // needs none, and OpenRouter's catalogue is public — you can browse the
         // free tier before deciding to sign up for a key to use it with.
         // DeepSeek is the one that will report back that it needs one.
-        let key = tokio::task::spawn_blocking(move || provider.api_key())
-            .await
-            .ok()
-            .flatten();
+        let address = endpoint.base_url.clone();
+        let key = tokio::task::spawn_blocking(move || match provider {
+            // Filed by host: the key for the address being listed.
+            ProviderChoice::Compatible => compatible_api_key(&address),
+            _ => provider.api_key(),
+        })
+        .await
+        .ok()
+        .flatten();
 
         let result = catalogue::list(provider, &endpoint, key.as_deref())
             .await
@@ -297,6 +321,10 @@ pub fn save(state: SettingsState, data_dir: &Path) -> Result<Vec<String>, String
             base_url: trimmed(state.deepseek_url.get_untracked()),
             model: trimmed(state.deepseek_model.get_untracked()),
         },
+        compatible: smithy_agent::Endpoint {
+            base_url: trimmed(state.compatible_url.get_untracked()),
+            model: trimmed(state.compatible_model.get_untracked()),
+        },
         jev: JevConfig {
             service: JevService::parse(&state.jev_service.get_untracked()),
             custom_url: trimmed(state.jev_custom_url.get_untracked()),
@@ -332,6 +360,16 @@ pub fn save(state: SettingsState, data_dir: &Path) -> Result<Vec<String>, String
             warnings.push(e);
         }
     }
+    let typed = state.compatible_key.get_untracked();
+    if !typed.trim().is_empty() {
+        if config.compatible.base_url.is_empty() {
+            return Err("Type the OpenAI-compatible address before its key.".into());
+        }
+        match secrets::set(&compatible_key_account(&config.compatible.base_url), &typed) {
+            Ok(()) => state.compatible_key_stored.set(true),
+            Err(e) => warnings.push(e),
+        }
+    }
 
     // The one case worth refusing outright: a hosted backend selected with no
     // key typed and none stored. Reconnecting would fail with a message about a
@@ -352,8 +390,19 @@ pub fn save(state: SettingsState, data_dir: &Path) -> Result<Vec<String>, String
 
 /// Forget a stored key.
 pub fn clear_key(state: SettingsState, account: &str) {
-    match secrets::clear(account) {
+    // The dialog names the OpenAI-compatible key generically; it is filed
+    // under the host of the address in the form.
+    let compatible = account == COMPATIBLE_KEY_FIELD;
+    let resolved = if compatible {
+        compatible_key_account(&state.compatible_url.get_untracked())
+    } else {
+        account.to_string()
+    };
+    match secrets::clear(&resolved) {
         Ok(()) => {
+            if compatible {
+                state.compatible_key_stored.set(false);
+            }
             match account {
                 OPENROUTER_KEY => state.openrouter_key_stored.set(false),
                 DEEPSEEK_KEY => state.deepseek_key_stored.set(false),
@@ -415,6 +464,7 @@ mod tests {
             lmstudio: blank(),
             openrouter: blank(),
             deepseek: blank(),
+            compatible: blank(),
             jev: JevConfig::default(),
         };
         *c.active_mut() = smithy_agent::Endpoint {

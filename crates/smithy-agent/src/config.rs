@@ -207,6 +207,9 @@ pub enum ProviderChoice {
     OpenRouter,
     /// DeepSeek's own API.
     DeepSeek,
+    /// Any OpenAI-compatible Chat Completions API, by address: OpenAI, Groq,
+    /// Mistral, xAI, Together, Gemini's compatibility endpoint, and so on.
+    Compatible,
 }
 
 impl ProviderChoice {
@@ -218,6 +221,7 @@ impl ProviderChoice {
         ProviderChoice::LmStudio,
         ProviderChoice::OpenRouter,
         ProviderChoice::DeepSeek,
+        ProviderChoice::Compatible,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -225,6 +229,7 @@ impl ProviderChoice {
             ProviderChoice::LmStudio => "lmstudio",
             ProviderChoice::OpenRouter => "openrouter",
             ProviderChoice::DeepSeek => "deepseek",
+            ProviderChoice::Compatible => "compatible",
         }
     }
 
@@ -234,6 +239,7 @@ impl ProviderChoice {
             ProviderChoice::LmStudio => "LM Studio",
             ProviderChoice::OpenRouter => "OpenRouter",
             ProviderChoice::DeepSeek => "DeepSeek",
+            ProviderChoice::Compatible => "OpenAI-compatible",
         }
     }
 
@@ -242,6 +248,9 @@ impl ProviderChoice {
             "lmstudio" | "lm-studio" | "lm_studio" | "local" => Some(ProviderChoice::LmStudio),
             "openrouter" | "open-router" | "open_router" => Some(ProviderChoice::OpenRouter),
             "deepseek" | "deep-seek" | "deep_seek" => Some(ProviderChoice::DeepSeek),
+            "compatible" | "openai-compatible" | "openai_compatible" => {
+                Some(ProviderChoice::Compatible)
+            }
             _ => None,
         }
     }
@@ -250,16 +259,20 @@ impl ProviderChoice {
     ///
     /// Drives whether the settings dialog treats an empty key field as an error
     /// or as normal, which is the difference between a helpful form and a form
-    /// that nags you about a field a local server has no use for.
+    /// that nags you about a field a local server has no use for. An
+    /// OpenAI-compatible address may be a server on your own network with no
+    /// key at all, so it is not refused for want of one.
     pub fn needs_api_key(self) -> bool {
-        !matches!(self, ProviderChoice::LmStudio)
+        matches!(self, ProviderChoice::OpenRouter | ProviderChoice::DeepSeek)
     }
 
     /// Where this backend's key lives: credential-store account, environment
-    /// variable. `None` for a backend that needs no key.
+    /// variable. `None` for a backend that needs no key, and for the
+    /// OpenAI-compatible one, whose key depends on its address (see
+    /// [`compatible_key_account`]).
     pub fn key_names(self) -> Option<(&'static str, &'static str)> {
         match self {
-            ProviderChoice::LmStudio => None,
+            ProviderChoice::LmStudio | ProviderChoice::Compatible => None,
             ProviderChoice::OpenRouter => Some((OPENROUTER_KEY, "OPENROUTER_API_KEY")),
             ProviderChoice::DeepSeek => Some((DEEPSEEK_KEY, "DEEPSEEK_API_KEY")),
         }
@@ -278,9 +291,38 @@ impl ProviderChoice {
     pub fn turn_seconds(self) -> u64 {
         match self {
             ProviderChoice::LmStudio => 3600,
-            ProviderChoice::OpenRouter | ProviderChoice::DeepSeek => 900,
+            ProviderChoice::OpenRouter | ProviderChoice::DeepSeek | ProviderChoice::Compatible => {
+                900
+            }
         }
     }
+}
+
+/// The credential-store account for an OpenAI-compatible service's key: one
+/// per host, so a Groq key is never sent to OpenAI because the address in the
+/// form was changed. `openai-compatible-api-key:api.groq.com`.
+pub fn compatible_key_account(base_url: &str) -> String {
+    let host = reqwest::Url::parse(base_url.trim())
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_lowercase))
+        .unwrap_or_else(|| base_url.trim().to_lowercase());
+    format!("openai-compatible-api-key:{host}")
+}
+
+/// The key for an OpenAI-compatible address: the one stored for its host, or
+/// `OPENAI_API_KEY` from the environment, but only for OpenAI's own host. An
+/// OpenAI key in the environment is never sent anywhere else.
+pub fn compatible_api_key(base_url: &str) -> Option<String> {
+    let account = compatible_key_account(base_url);
+    if secrets::is_stored(&account) {
+        if let Some(secret) = secrets::get(&account) {
+            return Some(secret);
+        }
+    }
+    if account.ends_with(":api.openai.com") {
+        return api_key("openai-compatible-api-key:api.openai.com", "OPENAI_API_KEY");
+    }
+    None
 }
 
 /// One backend's address and model.
@@ -311,6 +353,15 @@ impl Endpoint {
             model: crate::providers::deepseek::DEFAULT_MODEL.to_string(),
         }
     }
+
+    /// OpenAI's own address, with no model: models differ by service, and the
+    /// dialog lists the ones the address offers.
+    pub fn compatible_default() -> Self {
+        Endpoint {
+            base_url: "https://api.openai.com/v1".to_string(),
+            model: String::new(),
+        }
+    }
 }
 
 /// The persisted backend selection.
@@ -332,6 +383,9 @@ pub struct AgentConfig {
     /// DeepSeek existed still parses instead of resetting every other setting.
     #[serde(default = "Endpoint::deepseek_default")]
     pub deepseek: Endpoint,
+    /// The OpenAI-compatible backend's address and model.
+    #[serde(default = "Endpoint::compatible_default")]
+    pub compatible: Endpoint,
     /// Which Jev to ask, and where.
     pub jev: JevConfig,
 }
@@ -343,6 +397,7 @@ impl Default for AgentConfig {
             lmstudio: Endpoint::lmstudio_default(),
             openrouter: Endpoint::openrouter_default(),
             deepseek: Endpoint::deepseek_default(),
+            compatible: Endpoint::compatible_default(),
             jev: JevConfig::default(),
         }
     }
@@ -436,6 +491,11 @@ impl AgentConfig {
                 model: std::env::var("DEEPSEEK_MODEL")
                     .unwrap_or_else(|_| Endpoint::deepseek_default().model),
             },
+            compatible: Endpoint {
+                base_url: std::env::var("OPENAI_BASE_URL")
+                    .unwrap_or_else(|_| Endpoint::compatible_default().base_url),
+                model: std::env::var("OPENAI_MODEL").unwrap_or_default(),
+            },
             jev: JevConfig::default(),
         }
     }
@@ -446,6 +506,7 @@ impl AgentConfig {
             ProviderChoice::LmStudio => &self.lmstudio,
             ProviderChoice::OpenRouter => &self.openrouter,
             ProviderChoice::DeepSeek => &self.deepseek,
+            ProviderChoice::Compatible => &self.compatible,
         }
     }
 
@@ -460,6 +521,7 @@ impl AgentConfig {
             ProviderChoice::LmStudio => &mut self.lmstudio,
             ProviderChoice::OpenRouter => &mut self.openrouter,
             ProviderChoice::DeepSeek => &mut self.deepseek,
+            ProviderChoice::Compatible => &mut self.compatible,
         }
     }
 
@@ -486,6 +548,16 @@ impl AgentConfig {
                 Ok(Arc::new(crate::providers::DeepSeek::new(
                     self.deepseek.base_url.clone(),
                     self.deepseek.model.clone(),
+                    key,
+                )?))
+            }
+            ProviderChoice::Compatible => {
+                // No key is a valid configuration (a server on your own
+                // network); the server says so on connect if it wants one.
+                let key = compatible_api_key(&self.compatible.base_url).unwrap_or_default();
+                Ok(Arc::new(crate::providers::Compatible::new(
+                    self.compatible.base_url.clone(),
+                    self.compatible.model.clone(),
                     key,
                 )?))
             }
@@ -919,7 +991,7 @@ mod tests {
     /// would be invisible to the dialog, which iterates it.
     #[test]
     fn every_backend_is_listed_in_all() {
-        assert_eq!(ProviderChoice::ALL.len(), 3);
+        assert_eq!(ProviderChoice::ALL.len(), 4);
         for &choice in ProviderChoice::ALL {
             assert!(!choice.label().is_empty());
             assert!(!choice.as_str().is_empty());
@@ -1015,6 +1087,10 @@ mod tests {
                 model: "local".to_string(),
                 ..Endpoint::lmstudio_default()
             },
+            compatible: Endpoint {
+                base_url: "https://api.groq.com/openai/v1".to_string(),
+                model: "some-model".to_string(),
+            },
             jev: JevConfig {
                 service: Some(JevService::Custom),
                 custom_url: "http://my-gpu:8090/v1/systemone".to_string(),
@@ -1036,6 +1112,30 @@ mod tests {
         let b = ProviderChoice::DeepSeek.key_names().unwrap();
         assert_ne!(a, b);
         assert!(ProviderChoice::LmStudio.key_names().is_none());
+    }
+
+    /// An OpenAI-compatible key is filed by host: switching the address from
+    /// Groq to OpenAI must not send the Groq key to OpenAI.
+    #[test]
+    fn compatible_keys_are_filed_by_host() {
+        assert_eq!(
+            compatible_key_account("https://api.groq.com/openai/v1"),
+            "openai-compatible-api-key:api.groq.com"
+        );
+        assert_eq!(
+            compatible_key_account(" https://API.OpenAI.com/v1/ "),
+            "openai-compatible-api-key:api.openai.com"
+        );
+        assert_ne!(
+            compatible_key_account("https://api.groq.com/openai/v1"),
+            compatible_key_account("https://api.openai.com/v1")
+        );
+        assert!(ProviderChoice::Compatible.key_names().is_none());
+        assert!(!ProviderChoice::Compatible.needs_api_key());
+        assert_eq!(
+            ProviderChoice::parse(ProviderChoice::Compatible.as_str()),
+            Some(ProviderChoice::Compatible)
+        );
     }
 
     /// A missing sidecar must not send us to the keychain. Probing a name that

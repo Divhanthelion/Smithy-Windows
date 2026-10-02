@@ -47,6 +47,9 @@ pub enum ModelTier {
     /// picks for a given request. Multiplying that by a million and rendering it
     /// produced `$-1000000.00 per M`, which is how this variant came to exist.
     Variable,
+    /// Hosted, by a service whose model list carries no prices (most
+    /// OpenAI-compatible APIs). Shown with no badge rather than a guess.
+    Unpriced,
     /// On this machine.
     Local {
         size_bytes: u64,
@@ -87,6 +90,7 @@ impl ModelEntry {
                 completion_per_mtok,
             } => format!("${prompt_per_mtok:.2}/${completion_per_mtok:.2} per M"),
             ModelTier::Variable => "variable pricing".to_string(),
+            ModelTier::Unpriced => String::new(),
             ModelTier::Local { size_bytes, loaded } => {
                 let gb = *size_bytes as f64 / 1e9;
                 if *loaded {
@@ -136,7 +140,67 @@ pub async fn list(
         ProviderChoice::OpenRouter => list_openrouter(&endpoint.base_url, api_key).await,
         ProviderChoice::LmStudio => list_lmstudio(&endpoint.base_url).await,
         ProviderChoice::DeepSeek => list_deepseek(&endpoint.base_url, api_key).await,
+        ProviderChoice::Compatible => list_compatible(&endpoint.base_url, api_key).await,
     }
+}
+
+/// An OpenAI-compatible service's `/models`: ids, and a context window when
+/// the service reports one under any of the usual names. No prices and no
+/// tool flag are reported by these APIs, so every model is listed as able to
+/// call tools — hiding them all would be worse than the occasional one that
+/// cannot.
+async fn list_compatible(base_url: &str, api_key: Option<&str>) -> Result<Vec<ModelEntry>, String> {
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let mut request = client(20)?.get(&url);
+    if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
+        request = request.bearer_auth(key);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("could not reach {base_url}: {e}"))?;
+    let status = response.status().as_u16();
+    if status == 401 || status == 403 {
+        return Err(if api_key.is_some_and(|k| !k.trim().is_empty()) {
+            format!("{base_url} rejected the API key.")
+        } else {
+            format!("{base_url} wants an API key before it will list models. Add one, then save.")
+        });
+    }
+    if !(200..300).contains(&status) {
+        return Err(format!(
+            "{base_url} returned HTTP {status} when listing models"
+        ));
+    }
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("could not parse the model list from {base_url}: {e}"))?;
+    let data = body["data"]
+        .as_array()
+        .ok_or_else(|| format!("the model list from {base_url} had no `data` array"))?;
+    let mut entries = parse_compatible_models(data);
+    entries.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(entries)
+}
+
+fn parse_compatible_models(data: &[serde_json::Value]) -> Vec<ModelEntry> {
+    data.iter()
+        .filter_map(|model| {
+            let id = model["id"].as_str()?.to_string();
+            Some(ModelEntry {
+                label: model["name"]
+                    .as_str()
+                    .or(model["display_name"].as_str())
+                    .unwrap_or(&id)
+                    .to_string(),
+                context_length: crate::providers::compatible::context_of(model),
+                tool_capable: true,
+                tier: ModelTier::Unpriced,
+                id,
+            })
+        })
+        .collect()
 }
 
 /// DeepSeek's catalogue.
@@ -571,6 +635,27 @@ fn truncate(text: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // --- OpenAI-compatible ---
+
+    /// Groq says `context_window`, Mistral `max_context_length`, OpenAI
+    /// nothing; every model is listed, unpriced and able to call tools.
+    #[test]
+    fn a_compatible_model_list_is_read_under_each_services_field_names() {
+        let data = [
+            json!({"id": "llama-x", "context_window": 131072}),
+            json!({"id": "mistral-y", "max_context_length": 32768, "name": "Mistral Y"}),
+            json!({"id": "gpt-z", "object": "model"}),
+            json!({"object": "model"}),
+        ];
+        let entries = parse_compatible_models(&data);
+        assert_eq!(entries.len(), 3, "an entry without an id is skipped");
+        assert_eq!(entries[0].context_length, Some(131072));
+        assert_eq!(entries[1].label, "Mistral Y");
+        assert_eq!(entries[2].context_length, None);
+        assert!(entries.iter().all(|e| e.tool_capable));
+        assert!(entries.iter().all(|e| e.badge().is_empty()));
+    }
 
     // --- OpenRouter ---
 

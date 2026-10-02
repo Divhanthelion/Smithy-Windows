@@ -370,6 +370,17 @@ Credential Manager (the macOS Keychain on a Mac), never into a file, and only to
 that provider. The same dialog takes an optional Brave Search key (web search
 for the agent) and an optional Jev key.
 
+**With any OpenAI-compatible service.** Choose *OpenAI-compatible*, click a
+preset (OpenAI, Groq, Mistral, xAI, Together, Fireworks, Gemini) or type any
+other address that speaks OpenAI's Chat Completions API, paste that service's
+key, save, then pick a model from the list it returns. Each address keeps its
+own key, so switching services never sends one service's key to another.
+Services disagree about parameters (OpenAI's newer models refuse `max_tokens`
+and a non-default `temperature`); when a service refuses one by name, Smithy
+retries once without it and remembers for the session. OpenAI's reasoning
+models call tools on this API only with reasoning off, so for those the
+Responses API (not yet supported) is the better route.
+
 **With your own server.** Load any tool-capable model in LM Studio and start the server. Smithy checks at
 launch that the model is actually resident in memory, not merely downloaded, and
 tells you which if it isn't.
@@ -744,18 +755,20 @@ Backend selection lives in **Agent → Backend Settings…**, stored as
 store under the service name `smithy`, never in that file.
 
 The variables below are the fallback, used when no settings file has been saved.
-The four marked ✱ are superseded by the dialog the moment you press Save; the
+The ones marked ✱ are superseded by the dialog the moment you press Save; the
 rest have no UI and are read every time.
 
 | variable | default | what it does |
 |---|---|---|
-| `SMITHY_PROVIDER` ✱ | first key found, else `lmstudio` | `lmstudio`, `openrouter`, or `deepseek` |
+| `SMITHY_PROVIDER` ✱ | first key found, else `lmstudio` | `lmstudio`, `openrouter`, `deepseek`, or `compatible` |
 | `OPENROUTER_API_KEY` | *(none)* | OpenRouter key, if it isn't in the credential store |
 | `OPENROUTER_MODEL` ✱ | `anthropic/claude-3.5-sonnet` | model ID to use on OpenRouter |
 | `OPENROUTER_URL` ✱ | `https://openrouter.ai/api/v1` | OpenRouter API base URL |
 | `DEEPSEEK_API_KEY` | *(none)* | DeepSeek key, if it isn't in the credential store |
 | `DEEPSEEK_MODEL` ✱ | `deepseek-v4-flash` | model ID to use on DeepSeek |
 | `DEEPSEEK_URL` ✱ | `https://api.deepseek.com` | DeepSeek API base URL |
+| `OPENAI_BASE_URL` / `OPENAI_MODEL` ✱ | `https://api.openai.com/v1` / *(none)* | the OpenAI-compatible backend's address and model |
+| `OPENAI_API_KEY` | *(none)* | key for `api.openai.com` only, if none is stored for it; never sent to another address |
 | `LMSTUDIO_URL` ✱ | `http://localhost:1234/v1` | LM Studio endpoint |
 | `LMSTUDIO_MODEL` ✱ | `qwen3.6-27b` | LM Studio model name to ask for |
 | `BRAVE_API_KEY` | *(none)* | Brave Search key, if it isn't in the credential store. Absent means no `web_search` tool |
