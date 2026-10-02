@@ -88,14 +88,21 @@ impl Jev {
     /// `JEV_ENDPOINT` sends the questions to another server with the same
     /// API, as `JEV_MODEL` (default `typesafe-ai/jev`), with `JEV_API_KEY`
     /// if it wants one. The gateway key never goes anywhere but the gateway.
+    ///
+    /// Otherwise the service chosen in the settings dialog (the `jev` section
+    /// of `provider.json`): TypeSafe directly, the Vercel AI Gateway, or a
+    /// custom server, each with its own key.
     pub fn from_store() -> Option<Jev> {
         let var = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
         if let Some(endpoint) = var("JEV_ENDPOINT") {
             let jev = Jev::new(var("JEV_API_KEY").unwrap_or_default()).ok()?;
             return Some(jev.at(&endpoint, var("JEV_MODEL").as_deref().unwrap_or(MODEL)));
         }
-        let key = crate::config::api_key(AI_GATEWAY_KEY, "AI_GATEWAY_API_KEY")?;
-        Jev::new(key).ok()
+        let config = crate::config::default_data_dir()
+            .map(|dir| crate::config::AgentConfig::load(&dir).jev)
+            .unwrap_or_default();
+        let (endpoint, model, key) = config.connection()?;
+        Some(Jev::new(key).ok()?.at(&endpoint, &model))
     }
 
     pub fn new(key: String) -> Result<Jev, String> {

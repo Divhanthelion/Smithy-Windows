@@ -21,7 +21,10 @@ use std::path::Path;
 
 use floem::reactive::{SignalGet, SignalUpdate};
 use smithy_agent::catalogue;
-use smithy_agent::config::{secrets, BRAVE_KEY, DEEPSEEK_KEY, OPENROUTER_KEY};
+use smithy_agent::config::{
+    secrets, JevConfig, JevService, BRAVE_KEY, DEEPSEEK_KEY, JEV_CUSTOM_KEY, OPENROUTER_KEY,
+    TYPESAFE_KEY,
+};
 use smithy_agent::jev::AI_GATEWAY_KEY;
 use smithy_agent::{AgentConfig, ProviderChoice};
 use smithy_editor::{ModelRow, SettingsState};
@@ -93,6 +96,17 @@ fn open_with(state: SettingsState, data_dir: &Path, preselect: Option<ProviderCh
         .set(secrets::is_stored(DEEPSEEK_KEY));
     state.brave_key_stored.set(secrets::is_stored(BRAVE_KEY));
     state.jev_key_stored.set(secrets::is_stored(AI_GATEWAY_KEY));
+    state
+        .typesafe_key_stored
+        .set(secrets::is_stored(TYPESAFE_KEY));
+    state
+        .jev_custom_key_stored
+        .set(secrets::is_stored(JEV_CUSTOM_KEY));
+    state
+        .jev_service
+        .set(config.jev.resolved().as_str().to_string());
+    state.jev_custom_url.set(config.jev.custom_url.clone());
+    state.jev_custom_model.set(config.jev.custom_model.clone());
 
     state.forget_typed_secrets();
     state.status.set(String::new());
@@ -283,9 +297,20 @@ pub fn save(state: SettingsState, data_dir: &Path) -> Result<Vec<String>, String
             base_url: trimmed(state.deepseek_url.get_untracked()),
             model: trimmed(state.deepseek_model.get_untracked()),
         },
+        jev: JevConfig {
+            service: JevService::parse(&state.jev_service.get_untracked()),
+            custom_url: trimmed(state.jev_custom_url.get_untracked()),
+            custom_model: trimmed(state.jev_custom_model.get_untracked()),
+        },
     };
 
     validate(&config)?;
+    if config.jev.service == Some(JevService::Custom) {
+        let url = &config.jev.custom_url;
+        if !url.is_empty() && !url.starts_with("http://") && !url.starts_with("https://") {
+            return Err("Jev's server URL must start with http:// or https://.".into());
+        }
+    }
 
     let mut warnings = Vec::new();
 
@@ -297,6 +322,8 @@ pub fn save(state: SettingsState, data_dir: &Path) -> Result<Vec<String>, String
         (DEEPSEEK_KEY, state.deepseek_key.get_untracked()),
         (BRAVE_KEY, state.brave_key.get_untracked()),
         (AI_GATEWAY_KEY, state.jev_key.get_untracked()),
+        (TYPESAFE_KEY, state.typesafe_key.get_untracked()),
+        (JEV_CUSTOM_KEY, state.jev_custom_key.get_untracked()),
     ] {
         if typed.trim().is_empty() {
             continue; // an untouched field means "leave the stored key alone"
@@ -332,6 +359,8 @@ pub fn clear_key(state: SettingsState, account: &str) {
                 DEEPSEEK_KEY => state.deepseek_key_stored.set(false),
                 BRAVE_KEY => state.brave_key_stored.set(false),
                 AI_GATEWAY_KEY => state.jev_key_stored.set(false),
+                TYPESAFE_KEY => state.typesafe_key_stored.set(false),
+                JEV_CUSTOM_KEY => state.jev_custom_key_stored.set(false),
                 _ => {}
             }
             state.report("Key removed from your keychain.", false);
@@ -386,6 +415,7 @@ mod tests {
             lmstudio: blank(),
             openrouter: blank(),
             deepseek: blank(),
+            jev: JevConfig::default(),
         };
         *c.active_mut() = smithy_agent::Endpoint {
             base_url: url.to_string(),

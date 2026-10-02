@@ -60,6 +60,142 @@ pub const GITHUB_PAT: &str = "github-pat";
 /// Credential-store account name for the DeepSeek key.
 pub const DEEPSEEK_KEY: &str = "deepseek-api-key";
 
+/// Credential-store account for a TypeSafe key, used to reach Jev directly.
+pub const TYPESAFE_KEY: &str = "typesafe-api-key";
+
+/// Credential-store account for the key of a custom Jev-compatible server
+/// (optional: a server on your own network usually wants none).
+pub const JEV_CUSTOM_KEY: &str = "jev-custom-api-key";
+
+/// Where Jev's questions go. Every one of these speaks the same protocol
+/// (`POST …/v1/systemone`, a Bearer key); they differ in address, model name
+/// and whose key they take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum JevService {
+    /// TypeSafe's own API, with a TypeSafe key.
+    #[default]
+    TypeSafe,
+    /// Through the Vercel AI Gateway, with a gateway key.
+    Gateway,
+    /// Any server with the same API: JevK5 or Laya on your own GPU, or another
+    /// provider. Address and model from [`JevConfig`].
+    Custom,
+}
+
+impl JevService {
+    pub const ALL: &'static [JevService] = &[
+        JevService::TypeSafe,
+        JevService::Gateway,
+        JevService::Custom,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JevService::TypeSafe => "typesafe",
+            JevService::Gateway => "gateway",
+            JevService::Custom => "custom",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "typesafe" => Some(JevService::TypeSafe),
+            "gateway" | "vercel" => Some(JevService::Gateway),
+            "custom" => Some(JevService::Custom),
+            _ => None,
+        }
+    }
+
+    /// The address and model this service uses when nothing overrides them.
+    pub fn default_endpoint(self) -> (&'static str, &'static str) {
+        match self {
+            JevService::TypeSafe => ("https://api.typesafe.ai/v1/systemone", "jev-latest"),
+            JevService::Gateway => (
+                "https://ai-gateway.vercel.sh/typesafe/v1/systemone",
+                "typesafe-ai/jev",
+            ),
+            JevService::Custom => ("", "jev"),
+        }
+    }
+
+    /// Credential-store account and environment variable for this service's key.
+    pub fn key_names(self) -> (&'static str, &'static str) {
+        match self {
+            JevService::TypeSafe => (TYPESAFE_KEY, "TYPESAFE_API_KEY"),
+            JevService::Gateway => (crate::jev::AI_GATEWAY_KEY, "AI_GATEWAY_API_KEY"),
+            JevService::Custom => (JEV_CUSTOM_KEY, "JEV_API_KEY"),
+        }
+    }
+
+    pub fn api_key(self) -> Option<String> {
+        let (account, env_var) = self.key_names();
+        api_key(account, env_var)
+    }
+}
+
+/// Which Jev to ask, chosen in the settings dialog.
+///
+/// `service: None` (every settings file from before this existed) means
+/// "whichever has a key": TypeSafe's if one is stored, else the gateway's, so
+/// a setup that worked keeps working.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct JevConfig {
+    pub service: Option<JevService>,
+    /// The custom server's address, e.g. `http://my-gpu:8090/v1/systemone`.
+    pub custom_url: String,
+    /// The custom server's model name; empty means `jev`.
+    pub custom_model: String,
+}
+
+impl JevConfig {
+    /// The service in effect: the chosen one, or the first with a key.
+    pub fn resolved(&self) -> JevService {
+        if let Some(service) = self.service {
+            return service;
+        }
+        if JevService::TypeSafe.api_key().is_some() {
+            JevService::TypeSafe
+        } else if JevService::Gateway.api_key().is_some() {
+            JevService::Gateway
+        } else {
+            JevService::TypeSafe
+        }
+    }
+
+    /// Address, model and key for the service in effect; `None` when it
+    /// cannot be reached (no key for a hosted service, no address for a
+    /// custom one).
+    pub fn connection(&self) -> Option<(String, String, String)> {
+        let service = self.resolved();
+        let (url, model) = service.default_endpoint();
+        let key = service.api_key();
+        match service {
+            JevService::Custom => {
+                let url = self.custom_url.trim();
+                if url.is_empty() {
+                    return None;
+                }
+                let model = match self.custom_model.trim() {
+                    "" => model,
+                    m => m,
+                };
+                Some((url.to_string(), model.to_string(), key.unwrap_or_default()))
+            }
+            _ => Some((url.to_string(), model.to_string(), key?)),
+        }
+    }
+}
+
+/// `~/.local/share/smithy`: where settings, sessions and Run logs live.
+pub fn default_data_dir() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)?;
+    Some(home.join(".local/share/smithy"))
+}
+
 /// Which backend the agent talks to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -196,6 +332,8 @@ pub struct AgentConfig {
     /// DeepSeek existed still parses instead of resetting every other setting.
     #[serde(default = "Endpoint::deepseek_default")]
     pub deepseek: Endpoint,
+    /// Which Jev to ask, and where.
+    pub jev: JevConfig,
 }
 
 impl Default for AgentConfig {
@@ -205,6 +343,7 @@ impl Default for AgentConfig {
             lmstudio: Endpoint::lmstudio_default(),
             openrouter: Endpoint::openrouter_default(),
             deepseek: Endpoint::deepseek_default(),
+            jev: JevConfig::default(),
         }
     }
 }
@@ -297,6 +436,7 @@ impl AgentConfig {
                 model: std::env::var("DEEPSEEK_MODEL")
                     .unwrap_or_else(|_| Endpoint::deepseek_default().model),
             },
+            jev: JevConfig::default(),
         }
     }
 
@@ -786,6 +926,34 @@ mod tests {
         }
     }
 
+    /// Each Jev service resolves to its own address and model; a custom one
+    /// needs an address and may go without a key.
+    #[test]
+    fn a_jev_service_resolves_to_its_address_and_model() {
+        let custom = JevConfig {
+            service: Some(JevService::Custom),
+            custom_url: " http://my-gpu:8090/v1/systemone ".to_string(),
+            custom_model: String::new(),
+        };
+        let (url, model, _) = custom.connection().expect("a custom server needs no key");
+        assert_eq!(url, "http://my-gpu:8090/v1/systemone");
+        assert_eq!(model, "jev");
+
+        let no_address = JevConfig {
+            service: Some(JevService::Custom),
+            ..JevConfig::default()
+        };
+        assert!(no_address.connection().is_none());
+
+        assert_eq!(
+            JevService::TypeSafe.default_endpoint(),
+            ("https://api.typesafe.ai/v1/systemone", "jev-latest")
+        );
+        for &service in JevService::ALL {
+            assert_eq!(JevService::parse(service.as_str()), Some(service));
+        }
+    }
+
     /// A file naming only the backend in use keeps it, rather than failing to
     /// parse and falling back to LM Studio.
     #[test]
@@ -846,6 +1014,11 @@ mod tests {
             lmstudio: Endpoint {
                 model: "local".to_string(),
                 ..Endpoint::lmstudio_default()
+            },
+            jev: JevConfig {
+                service: Some(JevService::Custom),
+                custom_url: "http://my-gpu:8090/v1/systemone".to_string(),
+                custom_model: "jevk5".to_string(),
             },
         };
 

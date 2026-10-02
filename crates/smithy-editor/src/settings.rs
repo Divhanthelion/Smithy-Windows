@@ -94,14 +94,24 @@ pub struct SettingsState {
     pub openrouter_key: RwSignal<String>,
     pub deepseek_key: RwSignal<String>,
     pub brave_key: RwSignal<String>,
-    /// The Vercel AI Gateway key Jev is reached through.
+    /// Which Jev service: `"typesafe"`, `"gateway"` or `"custom"`.
+    pub jev_service: RwSignal<String>,
+    /// A custom Jev-compatible server: its address and model name.
+    pub jev_custom_url: RwSignal<String>,
+    pub jev_custom_model: RwSignal<String>,
+    /// Newly typed keys for each Jev service (TypeSafe, the Vercel AI Gateway,
+    /// a custom server); empty means "leave the stored one alone".
+    pub typesafe_key: RwSignal<String>,
     pub jev_key: RwSignal<String>,
+    pub jev_custom_key: RwSignal<String>,
     /// Whether a key is already in the credential store. Drives the placeholder
     /// and whether "Remove" is offered, without revealing the value.
     pub openrouter_key_stored: RwSignal<bool>,
     pub deepseek_key_stored: RwSignal<bool>,
     pub brave_key_stored: RwSignal<bool>,
+    pub typesafe_key_stored: RwSignal<bool>,
     pub jev_key_stored: RwSignal<bool>,
+    pub jev_custom_key_stored: RwSignal<bool>,
     /// Opened by the app itself on a first launch, with nothing configured:
     /// the header then says what the dialog is for instead of assuming you
     /// came looking for it.
@@ -150,11 +160,18 @@ impl SettingsState {
             openrouter_key: RwSignal::new(String::new()),
             deepseek_key: RwSignal::new(String::new()),
             brave_key: RwSignal::new(String::new()),
+            jev_service: RwSignal::new("typesafe".to_string()),
+            jev_custom_url: RwSignal::new(String::new()),
+            jev_custom_model: RwSignal::new(String::new()),
+            typesafe_key: RwSignal::new(String::new()),
             jev_key: RwSignal::new(String::new()),
+            jev_custom_key: RwSignal::new(String::new()),
             openrouter_key_stored: RwSignal::new(false),
             deepseek_key_stored: RwSignal::new(false),
             brave_key_stored: RwSignal::new(false),
+            typesafe_key_stored: RwSignal::new(false),
             jev_key_stored: RwSignal::new(false),
+            jev_custom_key_stored: RwSignal::new(false),
             welcome: RwSignal::new(false),
             keychain_available: RwSignal::new(true),
             status: RwSignal::new(String::new()),
@@ -221,7 +238,9 @@ impl SettingsState {
         self.openrouter_key.set(String::new());
         self.deepseek_key.set(String::new());
         self.brave_key.set(String::new());
+        self.typesafe_key.set(String::new());
         self.jev_key.set(String::new());
+        self.jev_custom_key.set(String::new());
     }
 
     pub fn report(&self, message: impl Into<String>, is_error: bool) {
@@ -375,7 +394,7 @@ fn panel(
                 "Choose the model the agent will use. With a hosted one (OpenRouter or DeepSeek) \
                  you paste your own API key: it is kept in Windows Credential Manager and sent \
                  only to that provider. OpenRouter has free models to start with. You can change \
-                 this any time under Agent → Backend Settings."
+                 this any time under Agent, Backend Settings."
                     .to_string()
             } else {
                 "Applies on save — the agent reconnects and starts a fresh session.".to_string()
@@ -876,23 +895,121 @@ fn brave_fields(state: SettingsState, on_clear_key: std::rc::Rc<dyn Fn(&str)>) -
     .style(|s| s.width_full().gap(8.0))
 }
 
+/// The Jev services the dialog offers: tag (`smithy_agent::JevService`'s
+/// serialized name), label.
+pub const JEV_SERVICES: [(&str, &str); 3] = [
+    ("typesafe", "TypeSafe"),
+    ("gateway", "Vercel AI Gateway"),
+    ("custom", "Custom server"),
+];
+
 fn jev_fields(state: SettingsState, on_clear_key: std::rc::Rc<dyn Fn(&str)>) -> impl IntoView {
+    let chips = Stack::horizontal((
+        service_chip(state.jev_service, JEV_SERVICES[0]),
+        service_chip(state.jev_service, JEV_SERVICES[1]),
+        service_chip(state.jev_service, JEV_SERVICES[2]),
+    ))
+    .style(|s| s.gap(6.0));
+
     Stack::vertical((
-        secret_field(
-            "Jev key (Vercel AI Gateway)",
-            state.jev_key,
-            state.jev_key_stored,
-            "ai-gateway-api-key",
-            on_clear_key,
-        ),
+        Label::derived(|| "Jev (optional)".to_string()).style(|s| {
+            s.font_size(11.0)
+                .color(catppuccin::SUBTEXT0)
+                .margin_bottom(2.0)
+        }),
         hint(
-            "Optional for the editor; unattended Runs need it. Jev is a second, fast model that \
-             checks the agent's work: it flags risky shell commands, notices when the agent is \
-             going in circles, and asks whether \"done\" really is. The gateway account needs \
-             paid credits.",
+            "A second, fast model that checks the agent's work: it flags risky shell commands, \
+             notices when the agent is going in circles, and asks whether \"done\" really is. \
+             Optional in the editor; unattended Runs need it.",
+        ),
+        chips,
+        dyn_container(
+            move || state.jev_service.get(),
+            move |service| match service.as_str() {
+                "gateway" => Stack::vertical((
+                    secret_field(
+                        "Vercel AI Gateway key",
+                        state.jev_key,
+                        state.jev_key_stored,
+                        "ai-gateway-api-key",
+                        on_clear_key.clone(),
+                    ),
+                    hint("Jev through Vercel's gateway. The account needs paid credits."),
+                ))
+                .style(|s| s.width_full().gap(8.0))
+                .into_any(),
+                "custom" => Stack::vertical((
+                    field(
+                        "Server URL",
+                        state.jev_custom_url,
+                        "http://my-gpu:8090/v1/systemone",
+                    ),
+                    field("Model", state.jev_custom_model, "jev"),
+                    secret_field(
+                        "API key (if the server wants one)",
+                        state.jev_custom_key,
+                        state.jev_custom_key_stored,
+                        "jev-custom-api-key",
+                        on_clear_key.clone(),
+                    ),
+                    hint(
+                        "Any server that speaks Jev's API (POST …/v1/systemone): JevK5 or Laya \
+                         on your own GPU, or another provider.",
+                    ),
+                ))
+                .style(|s| s.width_full().gap(8.0))
+                .into_any(),
+                _ => Stack::vertical((
+                    secret_field(
+                        "TypeSafe API key",
+                        state.typesafe_key,
+                        state.typesafe_key_stored,
+                        "typesafe-api-key",
+                        on_clear_key.clone(),
+                    ),
+                    hint("Jev straight from TypeSafe: create a key at console.typesafe.ai, under API Keys."),
+                ))
+                .style(|s| s.width_full().gap(8.0))
+                .into_any(),
+            },
         ),
     ))
     .style(|s| s.width_full().gap(8.0))
+}
+
+/// One choice in a row of mutually exclusive options.
+fn service_chip(
+    selected: RwSignal<String>,
+    (tag, label): (&'static str, &'static str),
+) -> impl IntoView {
+    Label::derived(move || label.to_string())
+        .on_event_stop(floem::event::listener::Click, move |_, _| {
+            selected.set(tag.to_string())
+        })
+        .style(move |s| {
+            let on = selected.get() == tag;
+            s.font_size(11.0)
+                .padding_horiz(10.0)
+                .padding_vert(5.0)
+                .border_radius(5.0)
+                .cursor(floem::style::CursorStyle::Pointer)
+                .border(1.0)
+                .border_color(if on {
+                    catppuccin::LAVENDER
+                } else {
+                    catppuccin::SURFACE0
+                })
+                .background(if on {
+                    catppuccin::SURFACE0
+                } else {
+                    catppuccin::CRUST
+                })
+                .color(if on {
+                    catppuccin::TEXT
+                } else {
+                    catppuccin::SURFACE2
+                })
+        })
 }
 
 fn field(

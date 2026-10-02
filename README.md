@@ -199,13 +199,20 @@ characters) and Notes (up to 7,000).
 
 ### Turning it on
 
-Put a Vercel AI Gateway key in the OS credential store (service `smithy`,
-account `ai-gateway-api-key`) or in `AI_GATEWAY_API_KEY`. The account needs
-paid credits: the gateway refuses Jev to free-tier accounts (`403 Free tier
-users do not have access to this model`). That's all; the checks switch on for
-every Session. `JEV_ENDPOINT`, `JEV_MODEL` and
-`JEV_API_KEY` point the same questions at another server with the same API
-instead. Two open models have been tried that way on the 63-case suite:
+In **Agent → Backend Settings…**, under *Jev*, choose where its questions go
+and paste that service's key:
+
+| Service | Address | Key |
+|---|---|---|
+| **TypeSafe** (default) | `https://api.typesafe.ai/v1/systemone`, model `jev-latest` | a TypeSafe key from console.typesafe.ai (`TYPESAFE_API_KEY`) |
+| **Vercel AI Gateway** | `https://ai-gateway.vercel.sh/typesafe/v1/systemone`, model `typesafe-ai/jev` | a gateway key with paid credits; free-tier accounts are refused (`AI_GATEWAY_API_KEY`) |
+| **Custom server** | any server with the same API, e.g. JevK5 on your own GPU | optional (`JEV_API_KEY`) |
+
+Keys go into the OS credential store. That's all; the checks switch on for every
+Session. A settings file from before this choice existed uses whichever of the
+first two has a key. `JEV_ENDPOINT`, `JEV_MODEL` and `JEV_API_KEY` in the
+environment override all of it. Two open models have been tried as a custom
+server on the 63-case suite:
 
 | Server | Wrong side | Notes |
 |---|---|---|
@@ -303,7 +310,7 @@ You need:
   Smithy opens its setup dialog, you paste the key and pick a model. Or run your
   own: [LM Studio](https://lmstudio.ai), or any OpenAI-compatible server such as
   vLLM.
-- For [Jev](#turning-it-on), a Vercel AI Gateway key with paid credits, or
+- For [Jev](#turning-it-on), a TypeSafe key (or a Vercel AI Gateway key with paid credits), or
   JevK5 served on your own GPU. Optional for the editor, required for
   unattended Runs.
 
