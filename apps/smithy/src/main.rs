@@ -981,6 +981,20 @@ fn app_view() -> impl IntoView {
                     let agent_state = agent_state.clone();
                     move || reconnect_agent(&agent_state)
                 }),
+                smithy_editor::MenuItem::Separator,
+                // Also under every reply. Here too, so the way to report one
+                // is findable without a reply on screen.
+                smithy_editor::MenuItem::action("Report an AI Reply…", {
+                    let agent_state = agent_state.clone();
+                    move || {
+                        if let Err(e) = smithy_editor::open_url(smithy_editor::REPORT_URL) {
+                            agent_state.panel.push(smithy_editor::AgentEntry::Notice(format!(
+                                "Could not open the report form ({e}). It is at {}",
+                                smithy_editor::REPORT_URL
+                            )));
+                        }
+                    }
+                }),
             ],
         ),
         smithy_editor::Menu::new(

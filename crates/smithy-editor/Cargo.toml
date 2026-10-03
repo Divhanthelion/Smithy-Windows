@@ -56,6 +56,10 @@ futures-util.workspace = true
 similar.workspace = true
 percent-encoding.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# ShellExecuteW, to open the report form in the default browser.
+windows-sys = { workspace = true, features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
 [dev-dependencies]
 # Headless renders of the backdrop, for the `sky` example.
 tiny-skia = "0.11"

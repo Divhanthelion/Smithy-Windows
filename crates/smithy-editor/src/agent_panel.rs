@@ -888,7 +888,7 @@ fn row_view(state: AgentPanelState, row: TranscriptRow) -> impl IntoView {
 fn entry_view(state: AgentPanelState, index: usize, entry: Entry) -> impl IntoView {
     match entry {
         Entry::User(text) => user_bubble(text).into_any(),
-        Entry::Answer(text) => markdown_answer(text).into_any(),
+        Entry::Answer(text) => answer_view(text).into_any(),
         Entry::Step {
             step,
             name,
@@ -1046,6 +1046,61 @@ fn user_bubble(text: String) -> impl IntoView {
             .border_color(catppuccin::LAVENDER)
     }))
     .style(|s| s.width_full().margin_vert(5.0))
+}
+
+fn answer_view(text: String) -> impl IntoView {
+    Stack::vertical((markdown_answer(text.clone()), answer_footer(text)))
+        .style(|s| s.flex_col().width_full().min_width(0.0))
+}
+
+/// Under every reply: copy all of it, or report it. The Microsoft Store asks
+/// apps that show generated content for a way to tell the developer about one
+/// (Store Policies 11.16). Reporting copies the reply as well, so it can be
+/// pasted into the form, or left out if it is not something to repost.
+fn answer_footer(text: String) -> impl IntoView {
+    let for_copy = text.clone();
+    Stack::horizontal((
+        Empty::new().style(|s| s.flex_grow(1.0_f32)),
+        footer_action("copy", "copied", move || {
+            floem::Clipboard::set_contents(for_copy.clone())
+                .map_err(|_| "could not copy".to_string())
+        }),
+        footer_action("report", "reply copied: paste it in the form", move || {
+            let _ = floem::Clipboard::set_contents(text.clone());
+            crate::link::open_url(crate::link::REPORT_URL)
+        }),
+    ))
+    .style(|s| s.width_full().min_width(0.0).items_center().gap(2.0))
+}
+
+/// A quiet text button that says what it did for a few seconds.
+fn footer_action(
+    label: &'static str,
+    done: &'static str,
+    action: impl Fn() -> Result<(), String> + 'static,
+) -> impl IntoView {
+    let said = RwSignal::new(None::<String>);
+    Label::derived(move || said.get().unwrap_or_else(|| label.to_string()))
+        .on_event_stop(floem::event::listener::Click, move |_, _| {
+            said.set(Some(match action() {
+                Ok(()) => done.to_string(),
+                Err(e) => e,
+            }));
+            floem::action::exec_after(Duration::from_secs(4), move |_| said.set(None));
+        })
+        .style(|s| {
+            nowrap(s)
+                .color(catppuccin::SURFACE2)
+                .font_size(10.0)
+                .padding_horiz(6.0)
+                .padding_vert(2.0)
+                .border_radius(4.0)
+                .cursor(floem::style::CursorStyle::Pointer)
+                .hover(|s| {
+                    s.color(catppuccin::LAVENDER)
+                        .background(catppuccin::SURFACE0)
+                })
+        })
 }
 
 fn markdown_answer(text: String) -> impl IntoView {

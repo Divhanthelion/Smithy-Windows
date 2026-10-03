@@ -1,0 +1,47 @@
+name: Report an AI reply
+description: A reply from Smithy's agent that was offensive, harmful or otherwise inappropriate.
+title: "AI reply: "
+labels: ["ai-content"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for telling us. Smithy's replies are written by the model you chose
+        (Claude, DeepSeek, an OpenRouter model, your own server...), not by Smithy, but
+        reports here are read and acted on: by changing Smithy's instructions to the
+        model, and by passing the report to the model's provider where that is the fix.
+
+        **This page is public.** The reply is on your clipboard (Smithy copied it when
+        you pressed *report*). Paste it below only if it is all right for anyone to
+        read, and leave out code, keys or anything private. Describing it is enough.
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Which backend produced it?
+      options:
+        - Claude (Anthropic)
+        - OpenRouter
+        - DeepSeek
+        - OpenAI-compatible service
+        - Your own server
+        - Don't know
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: The model name in Smithy's agent header, if you know it.
+      placeholder: e.g. claude-opus-5-5, deepseek-chat
+  - type: textarea
+    id: what
+    attributes:
+      label: What was wrong with it?
+    validations:
+      required: true
+  - type: textarea
+    id: reply
+    attributes:
+      label: The reply (optional)
+      description: Only if it is fine to make public.
+      render: text

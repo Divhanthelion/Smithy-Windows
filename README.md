@@ -945,8 +945,8 @@ Honest list, short:
   from a local file nobody has written yet.
 - **A Run does not survive a restart.** `--detach` keeps it alive when the
   terminal closes, not when the machine reboots; `--resume` carries on.
-- **CI runs on macOS only.** Windows is built and tested by hand, and Linux has
-  not been tried.
+- **CI runs on macOS and Windows.** Windows CI tests the workspace and builds
+  the Store package; Linux has not been tried.
 
 **Found something else?** Please open an issue — that's genuinely the most
 useful thing you can do here. Include what you were doing and, if it's the voice

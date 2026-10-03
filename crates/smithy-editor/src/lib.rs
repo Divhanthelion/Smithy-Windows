@@ -33,6 +33,7 @@ pub(crate) mod forged;
 pub(crate) mod highlight;
 pub mod hotkey;
 pub(crate) mod hover_popup;
+pub(crate) mod link;
 pub mod localtime;
 pub mod lsp;
 pub(crate) mod main_layout;
@@ -75,6 +76,7 @@ pub use file_browser_view::file_browser_view;
 pub use file_watcher::{spawn_file_watcher, FileWatcherEvent, FileWatcherHandle, IdeFileChange};
 pub use forged::{circuit_backdrop, forged_frame, shell_inset, shell_top_inset};
 pub use hover_popup::{hover_popup, HoverState};
+pub use link::{open_url, REPORT_URL};
 pub use lsp::{LspDiagnostic, LspHandle, LspManager, LspResponse};
 pub use main_layout::{main_layout_view, LayoutTheme};
 pub use menu_bar::{

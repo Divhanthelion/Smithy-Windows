@@ -24,3 +24,25 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build
         run: cargo build --workspace
+  # The app ships for Windows: test there, and build the Store package from a
+  # clean checkout. The package is unsigned with placeholder identity (the
+  # Store signs it), so this proves it packs; the one to upload is built
+  # locally with the Partner Center identity (packaging/windows-store).
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Test
+        run: cargo test --workspace
+      - name: Store package
+        run: powershell -ExecutionPolicy Bypass -File packaging\windows-store\build-msix.ps1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smithy-msix
+          path: target/msix/*.msix
+          if-no-files-found: error

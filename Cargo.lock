@@ -5840,6 +5840,7 @@ dependencies = [
  "tree-sitter-typescript",
  "vte",
  "which",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
 # Smithy privacy policy
 
-*Effective 1 October 2026. Applies to the Smithy editor and `smithy-agent`,
+*Effective 1 October 2026, updated 3 October 2026 (reporting a reply,
+removing Smithy's data). Applies to the Smithy editor and `smithy-agent`,
 including the Microsoft Store version.*
 
 **Smithy collects nothing about you.** It has no account, no telemetry, no
@@ -36,6 +37,24 @@ privacy policy. Requests name the app, not you: OpenRouter receives Smithy's
 name and project address (its standard app-attribution headers), and fetched
 web pages see the user agent `Smithy/<version> (+agent)`. Smithy adds no
 identifier for you or your computer to any request.
+
+## Reporting a reply
+
+Every agent reply has a **report** button, and the Agent menu has *Report an
+AI Reply…*. Either one opens a form on the project's GitHub page in your
+browser; the report button also copies that reply to your clipboard.
+Nothing is sent until you fill the form in and submit it yourself, and the
+form is public: paste the reply only if it is fine for anyone to read.
+
+## Removing Smithy's data
+
+Uninstalling removes the app. To remove what it stored as well, delete
+`%USERPROFILE%\.local\share\smithy` (settings, conversations, the speech
+model) and `%USERPROFILE%\.smithy` (your own skills and harness files, if you
+made any), and clear each key under Agent → Backend Settings before
+uninstalling, or remove the `smithy` entry from Credential Manager → Windows
+Credentials afterwards. Smithy writes `.smithy` folders inside a project only
+when you ask it to (harness files, Run logs); those are part of your project.
 
 ## Children
 
