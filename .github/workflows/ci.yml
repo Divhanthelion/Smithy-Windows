@@ -27,6 +27,27 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build
         run: cargo build --workspace
+  # Linux is a target, not an aspiration, and the only way to know which it
+  # is today is to build there. The apt list is exactly what the lockfile
+  # links against: alsa for cpal, gtk3 for rfd, xkbcommon and wayland for
+  # winit. The fisherman harness runs here too — tiny-skia is pure Rust, so
+  # the golden blessed on Windows should match to the pixel, and a platform
+  # where it does not is worth a red X.
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgtk-3-dev libxkbcommon-dev libwayland-dev
+      - name: Test
+        run: cargo test --workspace
+      - name: Fisherman harness
+        run: cargo test -p smithy-fisherman --features harness
   # The app ships for Windows: test there, and build the Store package from a
   # clean checkout. The package is unsigned with placeholder identity (the
   # Store signs it), so this proves it packs; the one to upload is built
