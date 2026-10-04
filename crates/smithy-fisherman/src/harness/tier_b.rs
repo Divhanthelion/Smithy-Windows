@@ -201,12 +201,37 @@ fn fire_where_fire_is() -> CheckResult {
 }
 
 fn light_agrees() -> CheckResult {
-    // door_glow > 0 ⇒ warm lit pixels near the doorway; lamp out ⇒ none.
-    // "A shut door never glows and a dark room never spills."
+    // The doorway's light and the state of the house must agree, three ways:
+    // he walks home to a *dark* doorway (the house is empty — a glow here is
+    // the window-lit-while-he-walks lie in door form); a sleeping hut's shut
+    // door never glows; and the one true spill left is the build's handover,
+    // where the lamp lit at 97% greets him through the opening door.
     let mut failures = 0u64;
-    let measured;
+    let hut = f::hut_for(WIDTH, height(), BAND);
+    let doorway = hut.door();
+    let (door_x0, door_x1, door_y0, door_y1) = (doorway.x0, doorway.x1, doorway.y0, doorway.y1);
+    // Strict lamp colours only: his FIGURE_EDGE gold stands *in* the doorway
+    // on these frames, and the old loose r/g/b heuristic counted his own
+    // outline as lamplight.
+    let warm_in_doorway = |ink: &super::raster::PixmapInk| {
+        let mut warm = 0u64;
+        for y in door_y0.max(0.0) as u32..door_y1.min(height()) as u32 {
+            for x in door_x0.max(0.0) as u32..door_x1.min(WIDTH) as u32 {
+                let Some((r, g, b, _)) = ink.pixel(x, y) else {
+                    continue;
+                };
+                if is_lamp_warm((r, g, b)) {
+                    warm += 1;
+                }
+            }
+        }
+        warm
+    };
+    // Window bleed upper bound on a dark frame, measured 2026-08-03.
+    const FRINGE: u64 = 20;
 
-    // Arriving walk with door opening — glow should spill.
+    // Arriving walk, door opening: the house is dark until he is inside, so
+    // the doorway must be a hole, not a glow.
     let arriving = Scene {
         width: WIDTH,
         height: height(),
@@ -219,39 +244,17 @@ fn light_agrees() -> CheckResult {
         frame: 40,
         seconds: 8.0,
     };
-    let lit = window_light(Doing::Reading, Place::Hut, 0.5); // bright lamp inside
-                                                             // door_glow uses the scene's own lit via draw_hut's window_light(block).
-                                                             // For Walking/Hut, window_light is 0.5 (anything else indoors branch is
-                                                             // place-based only when doing isn't special-cased — Walking at Hut is
-                                                             // NOT indoors for is_indoors, and window_light(_, Hut) for non-special
-                                                             // doing hits `(_, Place::Hut) => 0.5`).
-    let door = door_openness(
-        arriving.doing,
-        arriving.place,
-        arriving.previous,
-        arriving.progress,
-    );
     let glow = door_glow(
         window_light(arriving.doing, arriving.place, arriving.progress),
-        door,
+        door_openness(
+            arriving.doing,
+            arriving.place,
+            arriving.previous,
+            arriving.progress,
+        ),
     );
-    let ink = render_scene(&arriving);
-    let hut = f::hut_for(WIDTH, height(), BAND);
-    let doorway = hut.door();
-    let (door_x0, door_x1, door_y0, door_y1) = (doorway.x0, doorway.x1, doorway.y0, doorway.y1);
-    let mut warm = 0u64;
-    for y in door_y0.max(0.0) as u32..door_y1.min(height()) as u32 {
-        for x in door_x0.max(0.0) as u32..door_x1.min(WIDTH) as u32 {
-            let Some((r, g, b, _)) = ink.pixel(x, y) else {
-                continue;
-            };
-            if is_lamp_warm((r, g, b)) || (r > 100 && g > 50 && b < 90) {
-                warm += 1;
-            }
-        }
-    }
-    measured = glow;
-    if glow > 0.05 && warm == 0 {
+    let warm = warm_in_doorway(&render_scene(&arriving));
+    if glow > 0.01 || warm > FRINGE {
         failures += 1;
     }
 
@@ -267,41 +270,37 @@ fn light_agrees() -> CheckResult {
         seconds: 12.0,
         ..asleep
     };
-    let door2 = door_openness(asleep.doing, asleep.place, asleep.previous, asleep.progress);
     let glow2 = door_glow(
         window_light(asleep.doing, asleep.place, asleep.progress),
-        door2,
+        door_openness(asleep.doing, asleep.place, asleep.previous, asleep.progress),
     );
-    let ink2 = render_scene(&asleep);
-    let mut warm2 = 0u64;
-    for y in door_y0.max(0.0) as u32..door_y1.min(height()) as u32 {
-        for x in door_x0.max(0.0) as u32..door_x1.min(WIDTH) as u32 {
-            let Some((r, g, b, _)) = ink2.pixel(x, y) else {
-                continue;
-            };
-            // Doorway fill is DOORWAY (near-black) when shut; LAMP spill
-            // would be the bug.
-            if is_lamp_warm((r, g, b)) {
-                warm2 += 1;
-            }
-        }
-    }
-    if glow2 <= 0.01 && warm2 > 20 {
-        // A few AA fringe pixels from the window are tolerable; a glowing
-        // shut door is not. Threshold 20 measured as window bleed upper
-        // bound on a dark sleeping frame (2026-08-03).
+    let warm2 = warm_in_doorway(&render_scene(&asleep));
+    if glow2 > 0.01 || warm2 > FRINGE {
         failures += 1;
     }
 
-    let _ = lit; // cited above for the comment trail
+    // The handover home at the end of a night build: the lamp went on at
+    // 97%, he is walking to the door, and the spill through it is the one
+    // doorway glow the rail still makes. If this goes dark the finish of
+    // every evening launch loses its payoff. Measured 2026-10-03: 161 warm
+    // doorway pixels, eight times the fringe.
+    let handover = sample(20.5, BUILD_SECONDS * 0.995, 40);
+    let warm3 = warm_in_doorway(&render_scene(&handover));
+    if warm3 <= FRINGE {
+        failures += 1;
+    }
+
     CheckResult {
         name: "light_agrees",
         tier: "B",
         pass: failures == 0,
-        measured,
-        threshold: Some(0.0),
+        // The handover's warm count, since the two dark cases assert an
+        // absence a zero cannot summarise.
+        measured: warm3 as f64,
+        threshold: Some(FRINGE as f64),
         detail: format!(
-            "{failures} disagreements (arriving glow={glow:.3} warm={warm}; sleeping glow={glow2:.3} warm={warm2})"
+            "{failures} disagreements (arriving glow={glow:.3} warm={warm}; \
+             sleeping glow={glow2:.3} warm={warm2}; handover warm={warm3})"
         ),
         flips: vec![],
     }

@@ -202,6 +202,8 @@ impl PixmapInk {
 
     /// Copy a source rectangle into this pixmap at `(dst_x, dst_y)`.
     /// Colour only — sheet composites do not need the per-part mask.
+    // A src rect and dst point as structs would be ceremony for a test-only blitter.
+    #[allow(clippy::too_many_arguments)]
     pub fn blit_from(
         &mut self,
         src: &PixmapInk,
@@ -278,8 +280,10 @@ impl Ink for PixmapInk {
 
     fn stroke(&mut self, path: &BezPath, color: Color, width: f64) {
         if let Some(p) = to_ts(path) {
-            let mut stroke = tiny_skia::Stroke::default();
-            stroke.width = width.max(0.05) as f32;
+            let stroke = tiny_skia::Stroke {
+                width: width.max(0.05) as f32,
+                ..Default::default()
+            };
             self.pm.stroke_path(
                 &p,
                 &Self::paint(color),
@@ -354,8 +358,8 @@ pub fn render_scene(scene: &Scene) -> PixmapInk {
     ink
 }
 
-/// Colour helpers for pixel analysis. Exact match on solid fills; AA edges
-/// are handled by the callers that tolerate a channel distance.
+// Colour helpers for pixel analysis. Exact match on solid fills; AA edges
+// are handled by the callers that tolerate a channel distance.
 
 pub fn rgba8(c: Color) -> (u8, u8, u8, u8) {
     let c = c.to_rgba8();

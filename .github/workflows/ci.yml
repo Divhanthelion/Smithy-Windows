@@ -20,6 +20,9 @@ jobs:
         run: cargo test --workspace
       - name: Fisherman harness
         run: cargo test -p smithy-fisherman --features harness
+      # The workspace Clippy below skips feature-gated targets, so the harness code was invisible to -D warnings.
+      - name: Fisherman harness clippy
+        run: cargo clippy -p smithy-fisherman --features harness --all-targets -- -D warnings
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build

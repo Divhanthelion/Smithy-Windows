@@ -64,6 +64,7 @@ pub fn run_all() -> Vec<CheckResult> {
         right_size(),
         does_not_teleport(),
         does_not_moonwalk(),
+        carries_nothing_on_a_walk(),
         lighting_continuity(),
         facing_continuity(),
     ]
@@ -284,34 +285,39 @@ fn right_size() -> CheckResult {
     let (scale, _, _) = stage_layout(WIDTH, BAND);
     let lo = 0.5 * scale;
     let hi = (1.1 + 2.0 * f::FIGURE_EDGE_FRAC) * scale + 1.0;
-    let mut worst = 0.0;
     let mut failures = 0u64;
+    let mut tallest = 0.0_f64;
+    // (distance outside [lo, hi], height) of the worst failing frame.
+    let mut worst: Option<(f64, f64)> = None;
 
     for scene in outdoor_samples() {
         let ink = render_scene(&scene);
-        let Some((_, min_y, _, max_y)) = ink.part_bounds(Part::Figure) else {
-            failures += 1;
-            continue;
-        };
-        let h = (max_y - min_y + 1) as f64;
-        worst = if failures == 0 && worst == 0.0 {
-            h
-        } else if h < lo || h > hi {
-            h
-        } else {
-            worst.max(h)
-        };
+        // No figure at all is height zero: below lo, so it fails and can be
+        // the reported worst, rather than a failure the measure never shows.
+        let h = ink
+            .part_bounds(Part::Figure)
+            .map_or(0.0, |(_, min_y, _, max_y)| (max_y - min_y + 1) as f64);
+        tallest = tallest.max(h);
         if h < lo || h > hi {
             failures += 1;
-            worst = h;
+            // Distance, not height, so a smudge and a giant compare.
+            let out_by = (lo - h).max(h - hi);
+            if worst.is_none_or(|(by, _)| out_by > by) {
+                worst = Some((out_by, h));
+            }
         }
     }
+
+    // Red: the frame furthest out of range. The old tracking let the last
+    // failure overwrite it, so a giant then a near-miss reported the near
+    // miss. Green: the tallest, since the threshold shown beside it is hi.
+    let measured = worst.map_or(tallest, |(_, h)| h);
 
     CheckResult {
         name: "right_size",
         tier: "A",
         pass: failures == 0,
-        measured: worst,
+        measured,
         threshold: Some(hi),
         detail: format!(
             "{failures} frames with figure bbox height outside [{lo:.1}, {hi:.1}] (scale={scale:.1})"
@@ -341,18 +347,24 @@ fn does_not_teleport() -> CheckResult {
     let steps = 2_000u64;
     let mut max_build = 0.0;
     let mut at_build = 0u64;
-    let mut prev_c = position_of(&sample_scene(10.0, 0.0, 0));
     let dt = BUILD_SECONDS / steps as f64;
-    for i in 1..=steps {
-        let launched = BUILD_SECONDS * (i as f64 / steps as f64);
-        let scene = sample_scene(10.0, launched, i);
-        let along = position_of(&scene);
-        let d = (along - prev_c).abs() / dt.max(1e-9);
-        if d > max_build {
-            max_build = d;
-            at_build = i;
+    // Two launch hours, because the handover walks to wherever the day has
+    // him: 10.0 hands over to the perch (rightward, long) and 20.5 to the
+    // hut (leftward, into an indoor block) — the second was unswept, and it
+    // is the one a night launch takes every time.
+    for hour in [10.0, 20.5] {
+        let mut prev_c = position_of(&sample_scene(hour, 0.0, 0));
+        for i in 1..=steps {
+            let launched = BUILD_SECONDS * (i as f64 / steps as f64);
+            let scene = sample_scene(hour, launched, i);
+            let along = position_of(&scene);
+            let d = (along - prev_c).abs() / dt.max(1e-9);
+            if d > max_build {
+                max_build = d;
+                at_build = i;
+            }
+            prev_c = along;
         }
-        prev_c = along;
     }
 
     let day_ok = max_day < MAX_DELTA_PER_SECOND;
@@ -400,19 +412,24 @@ fn does_not_moonwalk() -> CheckResult {
 
     let steps = 2_000u64;
     let mut build_completions: Vec<f64> = Vec::new();
-    let mut prev_along = position_of(&sample_scene(10.0, 0.0, 0));
-    for i in 1..=steps {
-        let launched = BUILD_SECONDS * (i as f64 / steps as f64);
-        let completion = launched / BUILD_SECONDS;
-        let scene = sample_scene(10.0, launched, i);
-        let along = position_of(&scene);
-        let face = face_of(&scene);
-        let delta = along - prev_along;
-        if delta < -MOONWALK_EPS && face >= 0.0 {
-            violations += 1;
-            build_completions.push(completion);
+    // Both handover directions — see the twin loop in does_not_teleport.
+    // A leftward handover (night launch, day place indoors) is where a
+    // facing seam would moonwalk him straight through his own front door.
+    for hour in [10.0, 20.5] {
+        let mut prev_along = position_of(&sample_scene(hour, 0.0, 0));
+        for i in 1..=steps {
+            let launched = BUILD_SECONDS * (i as f64 / steps as f64);
+            let completion = launched / BUILD_SECONDS;
+            let scene = sample_scene(hour, launched, i);
+            let along = position_of(&scene);
+            let face = face_of(&scene);
+            let delta = along - prev_along;
+            if delta < -MOONWALK_EPS && face >= 0.0 {
+                violations += 1;
+                build_completions.push(completion);
+            }
+            prev_along = along;
         }
-        prev_along = along;
     }
 
     let mut boundaries: Vec<f64> = Vec::new();
@@ -440,6 +457,72 @@ fn does_not_moonwalk() -> CheckResult {
         detail: format!(
             "{violations} steps with Δposition < 0 while facing ≥ 0; \
              build completions: [{boundary_list}]"
+        ),
+        flips: vec![],
+    }
+}
+
+fn carries_nothing_on_a_walk() -> CheckResult {
+    // Figure bbox *width* on walking frames away from the perch must be
+    // body-sized. This is the guard for the carried-rod class of artifact:
+    // shouldered, the rod stretched a walking figure's box to ~1.25 of his
+    // height, and at the hut that span crossed the lit window whichever way
+    // he faced — the most visible flaw this rail has had, and invisible to
+    // every other check because the rod stayed inside the rail band. The
+    // strides span at most ~0.63 of the box (far boot heel to near boot
+    // toe), plus the silhouette's edge each side; anything wider is him
+    // carrying something, and nothing is carried on a walk any more.
+    // Measured 2026-10-03: widest walking bbox 15px against this 18.1px
+    // bound; the shouldered-rod era measured ~28px on the same frames.
+    let (scale, _, _) = stage_layout(WIDTH, BAND);
+    let hi = scale * (0.63 + 2.0 * f::FIGURE_EDGE_FRAC) + 2.0;
+
+    // Both directions past the hut, the door beat, and an open-rail walk.
+    let walks: &[(Place, Place, &[f64])] = &[
+        (Place::Garden, Place::Hut, &[0.05, 0.1, 0.15, 0.3, 0.6, 0.95]),
+        (Place::Hut, Place::Perch, &[0.02, 0.05, 0.1, 0.25, 0.5]),
+        (Place::Fire, Place::Doorstep, &[0.05, 0.5]),
+    ];
+
+    let mut failures = 0u64;
+    let mut widest = 0.0_f64;
+    for (previous, place, progresses) in walks {
+        for &progress in *progresses {
+            let scene = Scene {
+                width: WIDTH,
+                height: height(),
+                band: BAND,
+                doing: Doing::Walking,
+                place: *place,
+                previous: *previous,
+                progress,
+                completion: 1.0,
+                frame: 40,
+                seconds: 8.0,
+            };
+            let ink = render_scene(&scene);
+            // A walking frame outdoors with no figure at all is its own
+            // failure — an absent man carries nothing, trivially.
+            let w = ink
+                .part_bounds(Part::Figure)
+                .map_or(f64::INFINITY, |(min_x, _, max_x, _)| {
+                    (max_x - min_x + 1) as f64
+                });
+            widest = widest.max(w);
+            if w > hi {
+                failures += 1;
+            }
+        }
+    }
+
+    CheckResult {
+        name: "carries_nothing_on_a_walk",
+        tier: "A",
+        pass: failures == 0,
+        measured: widest,
+        threshold: Some(hi),
+        detail: format!(
+            "{failures} walking frames with figure bbox wider than {hi:.1}px (widest {widest:.1})"
         ),
         flips: vec![],
     }
@@ -523,7 +606,10 @@ fn light_of(scene: &Scene) -> (f64, f64) {
     let lamp = window_light(scene.doing, scene.place, scene.progress);
     let door = if scene.completion < 1.0 {
         let handover = ((scene.completion - HANDOVER) / (1.0 - HANDOVER)).clamp(0.0, 1.0);
-        door_openness(Doing::Walking, scene.place, Place::Garden, handover)
+        // Perch, mirroring `paint`: the stand-in whose `arrival_for` equals
+        // the handover's own ARRIVAL pace, so this measures the door the
+        // renderer actually draws.
+        door_openness(Doing::Walking, scene.place, Place::Perch, handover)
     } else {
         door_openness(scene.doing, scene.place, scene.previous, scene.progress)
     };

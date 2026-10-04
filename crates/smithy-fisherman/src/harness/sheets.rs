@@ -86,7 +86,7 @@ pub fn day_sheet(out_dir: &std::path::Path) {
         cell_w = cell_w.max(cw);
         cell_h = cell_h.max(ch);
 
-        let h = (minutes / 60) as u32;
+        let h = minutes / 60;
         let m = minutes % 60;
         let label = format!("{} {:02}:{:02}", doing_label(scene.doing), h, m);
         crops.push((label, rendered, cx0, cy0, cw, ch));
@@ -324,15 +324,21 @@ pub fn build_sheet(out_dir: &std::path::Path) {
 }
 
 /// One stride, frame by frame — short-stage walk so the gait is readable.
+///
+/// Sampled across the *moving* span of the block, not the whole of it:
+/// walks keep a constant pace, so this short one arrives at ~16% and the
+/// old 0..1 sampling gave ten frames of a man standing at his destination
+/// and two of gait — a walk sheet with no walk on it.
 pub fn walk_sheet(out_dir: &std::path::Path) {
     let frames = 12u32;
     let tile_w = (WIDTH * 0.45) as u32;
     let tile_h = height() as u32;
     let gap = 4u32;
     let mut sheet = PixmapInk::new(frames * (tile_w + gap) - gap, tile_h, STEEL_DEEP);
+    let arrival = f::arrival_for(Place::Doorstep, Place::Garden);
 
     for i in 0..frames {
-        let progress = i as f64 / frames as f64;
+        let progress = (i as f64 / frames as f64) * arrival;
         let ox = (i * (tile_w + gap)) as f64;
         let scene = Scene {
             width: tile_w as f64,

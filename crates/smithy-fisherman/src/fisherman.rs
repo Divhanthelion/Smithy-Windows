@@ -82,9 +82,10 @@ pub fn arrival_for(from: Place, to: Place) -> f64 {
 /// avoid.
 pub const HANDOVER: f64 = 0.90;
 
-/// How much of a walk is spent moving. The rest is the beat at the door.
-///
-/// Roughly a step's worth of pause at the end, scaled off the walk's length.
+/// How much of the longest walk is spent moving. The rest is the beat at
+/// the end — and since short walks arrive earlier (see [`arrival_for`]),
+/// their beat is correspondingly longer: he stands where he arrived for the
+/// remainder of the block. Standing is cheap; striding on the spot was not.
 pub const ARRIVAL: f64 = 0.80;
 
 /// How far the door stands open, 0 to 1.
@@ -181,7 +182,8 @@ pub const FIRE_BODY: Color = Color::from_rgb8(226, 132, 44);
 pub const FIRE_DEEP: Color = Color::from_rgb8(126, 48, 18);
 pub const FISH: Color = Color::from_rgb8(150, 172, 196);
 pub const SMOKE: Color = Color::from_rgb8(150, 158, 172);
-/// Paper, the one genuinely pale thing on him — which is why the book reads.
+/// The garden's shoots — the one genuinely green thing on the rail, which is
+/// why four small strokes of it read as a garden at all.
 pub const GREEN: Color = Color::from_rgb8(96, 138, 84);
 /// Paper, the one genuinely pale thing he owns.
 pub const PAGE: Color = Color::from_rgb8(196, 190, 172);
@@ -254,36 +256,50 @@ const SEATED: Pose = Pose {
     hat_tilt: 0.16,
 };
 
+/// Standing, the arm hanging easy.
+///
+/// The arm used to bend up to grip a shouldered rod, and the rod went
+/// everywhere he did. That carry had to end: standing at his own door the
+/// shaft crossed the hut whichever way it pointed — back-right it skewered
+/// the lit window, forward it crossed the doorway, and a building he is
+/// standing against leaves no direction a figure-height of rod can go. The
+/// rod lives at the jetty now (see [`draw_jetty`]), and the arm hangs — a
+/// hand's width proud of the trunk, because an arm flush against the body
+/// vanishes into the silhouette and he reads as armless.
 const STANDING: Pose = Pose {
     head: Point::new(0.30, 0.11),
     head_radius: 0.086,
     shoulder: Point::new(0.31, 0.27),
-    // The arm bends up to grip the rod where it rests on the shoulder — a
-    // shouldered carry reads as a saunter; a rod floating across the chest
-    // with the arm hanging reads as a spear levelled at nobody.
-    elbow: Point::new(0.40, 0.36),
+    elbow: Point::new(0.34, 0.40),
     hip: Point::new(0.30, 0.56),
     knee: Point::new(0.31, 0.76),
     foot: Point::new(0.33, 0.95),
-    hand: Point::new(0.46, 0.32),
-    // Shouldered, pointing back and up — the saunter silhouette. The butt is
-    // placed so the shaft passes *through* the shoulder point: it rests on
-    // him, rather than crossing his neck (its first home) or floating in
-    // front of his chest.
-    rod_tip: Point::new(-0.62, 0.06),
-    rod_butt: Point::new(0.58, 0.33),
+    hand: Point::new(0.38, 0.51),
+    // Never drawn standing — the rod rests at the water. Laid level with the
+    // ground like the other grounded poses, so a blend through STANDING
+    // cannot drag a phantom rod across the air.
+    rod_tip: Point::new(1.30, 0.97),
+    rod_butt: Point::new(0.10, 0.97),
     hat_tilt: -0.05,
 };
 
+/// The arm counter-swings the near leg — foot forward, hand back, and the
+/// other way on the return. Without it the blend between the two strides
+/// moves only the legs, and a walk whose arms hang dead is a man carried
+/// along on rails rather than one walking.
 const STRIDE_FORWARD: Pose = Pose {
     foot: Point::new(0.55, 0.94),
     knee: Point::new(0.49, 0.75),
+    elbow: Point::new(0.31, 0.40),
+    hand: Point::new(0.30, 0.50),
     ..STANDING
 };
 
 const STRIDE_BACK: Pose = Pose {
     foot: Point::new(0.23, 0.94),
     knee: Point::new(0.31, 0.77),
+    elbow: Point::new(0.37, 0.40),
+    hand: Point::new(0.46, 0.49),
     ..STANDING
 };
 
@@ -465,17 +481,17 @@ pub fn breathe(pose: Pose, rise: f64) -> Pose {
     }
 }
 
-/// The breath, and the slow secondary motions, at a moment.
-///
-/// `seconds` is wall-clock, so the periods above mean what they say.
 /// How far his hat tips as he looks about, in the pose's own units.
 ///
-/// Its own period again, and the longest of them: a head that turned on the
+/// Its own period, separate from the breath's: a head that turned on the
 /// breath would read as one motion rather than two.
 pub fn head_drift(seconds: f64) -> f64 {
     ((seconds / HEAD_SECONDS) * std::f64::consts::TAU).sin() * 0.06
 }
 
+/// The breath, and the slow settle under it, at a moment.
+///
+/// `seconds` is wall-clock, so the periods above mean what they say.
 pub fn secondary(seconds: f64, doing: Doing) -> f64 {
     let wave = |period: f64| ((seconds / period) * std::f64::consts::TAU).sin();
     let depth = match doing {
@@ -843,10 +859,15 @@ pub fn paint(ink: &mut impl Ink, scene: &Scene) {
 
     let hut = hut_for(w, h, band);
     // While he is walking home at the end of the build, the door answers to
-    // that walk rather than to the routine.
+    // that walk rather than to the routine. The stand-in `previous` is Perch,
+    // not because he came from there, but because `position_for`'s handover
+    // eases over the full `ARRIVAL` — the pace of the *longest* walk — and
+    // `arrival_for(Perch, Hut)` is the one lookup that returns exactly that.
+    // Garden sat here once, and its 0.176 arrival swung the door open while
+    // he was still a third of the way across the stage.
     let door_open = if completion < 1.0 {
         let handover = ((completion - HANDOVER) / (1.0 - HANDOVER)).clamp(0.0, 1.0);
-        door_openness(Doing::Walking, block_place, Place::Garden, handover)
+        door_openness(Doing::Walking, block_place, Place::Perch, handover)
     } else {
         door_openness(block_doing, block_place, came_from, progress)
     };
@@ -859,7 +880,16 @@ pub fn paint(ink: &mut impl Ink, scene: &Scene) {
         end: 1.0,
     };
     draw_hut(ink, &hut, &block, progress, frame, completion, door_open);
-    draw_jetty(ink, w, h, band, frame);
+    // The rod rests on the jetty whenever it is not in his hands — which is
+    // everywhere but fishing (and the cigarette he takes without leaving the
+    // perch). While he builds, it rests too.
+    let rod_held = completion >= 1.0
+        && matches!(block_doing, Doing::Fishing | Doing::Smoking)
+        && block_place == Place::Perch;
+    draw_jetty(ink, w, h, band, frame, !rod_held);
+    if completion >= 1.0 {
+        draw_garden(ink, w, h, band);
+    }
     if completion < HANDOVER {
         draw_lumber(ink, w, h, band, completion);
     }
@@ -909,7 +939,15 @@ pub fn paint(ink: &mut impl Ink, scene: &Scene) {
         // The fire is a fixture at the pit, not a prop that follows him —
         // a hearth that teleports to the doorstep for dinner reads as a
         // decal, the same failure as flames without a glow.
-        draw_fire(ink, &block, progress, fire_pit(w, h, band), scale, frame);
+        draw_fire(
+            ink,
+            &block,
+            progress,
+            came_from,
+            fire_pit(w, h, band),
+            scale,
+            frame,
+        );
         draw_line_and_rod(ink, &block, &pose, &at, scale, h, frame);
         draw_figure(ink, &pose, &at, scale);
         draw_props(ink, &block, progress, &pose, &at, scale, frame);
@@ -1060,14 +1098,16 @@ fn draw_line_and_rod(
     panel_height: f64,
     frame: u64,
 ) {
-    // The rod is in his hands at the water, and shouldered on every walk —
-    // that shouldered diagonal is the saunter silhouette the standing pose was
-    // measured for, and gating it to the perch left him walking with a bent
-    // arm around nothing. Everywhere else it is leaning somewhere and is not
-    // worth drawing at this size.
+    // The rod is in his hands at the water, and nowhere else. It used to be
+    // shouldered on every walk, and the saunter was handsome right up until
+    // he stood at his own door with it: a figure-height of shaft crossed the
+    // hut whichever way it pointed — back-right through the lit window,
+    // forward through the doorway — and there is no orientation that misses
+    // a building he is standing against. So the rod rests at the jetty when
+    // it is not in use (see `draw_jetty`), which is also where a rod lives.
     let at_the_water =
         matches!(block.doing, Doing::Fishing | Doing::Smoking) && block.place == Place::Perch;
-    if !at_the_water && block.doing != Doing::Walking {
+    if !at_the_water {
         return;
     }
     let tip = at(pose.rod_tip);
@@ -1076,14 +1116,10 @@ fn draw_line_and_rod(
     rod.move_to(at(pose.rod_butt));
     rod.line_to(tip);
     // Rod is part of the silhouette — same Part as the body, so "he exists"
-    // and "right size" see the shouldered/cast rod as him, not as a prop.
+    // and "right size" see the cast rod as him, not as a prop.
     ink.begin(Part::Figure);
     ink.stroke(&rod, IRON, (scale * 0.06).max(1.2));
     ink.stroke(&rod, RIM.with_alpha(0.9), (scale * 0.025).max(0.6));
-
-    if !at_the_water {
-        return;
-    }
 
     // The line has its own period, prime against the breath, and it *lags* —
     // that lag is most of what makes him read as alive rather than articulated.
@@ -1123,7 +1159,12 @@ const WOOD: Color = Color::from_rgb8(36, 30, 24);
 /// the rail. The jetty gives him somewhere to sit, and the water gives the
 /// line somewhere to go — without them "fishing" was a man holding a stick
 /// out over nothing.
-fn draw_jetty(ink: &mut impl Ink, w: f64, h: f64, band: f64, frame: u64) {
+///
+/// `rod_resting` lays his rod across the deck, tip out over the water. The
+/// rod lives here whenever it is not in his hands — carried, it had to cross
+/// whatever he stood beside (the hut, fatally); resting, it also says the
+/// perch is *his* even when he is not on it.
+fn draw_jetty(ink: &mut impl Ink, w: f64, h: f64, band: f64, frame: u64, rod_resting: bool) {
     let (scale, stage_left, stage) = stage_layout(w, band);
     let perch = stage_left + place_position(Place::Perch) * stage;
     let deck = ground(h, band);
@@ -1165,6 +1206,47 @@ fn draw_jetty(ink: &mut impl Ink, w: f64, h: f64, band: f64, frame: u64) {
         RIM.with_alpha(0.45),
         (scale * 0.02).max(0.5),
     );
+
+    if rod_resting {
+        // Propped on the deck at a shallow angle, the same two strokes as
+        // the rod in his hands so it reads as the same object. Props, not
+        // Figure: it is only him when he is holding it.
+        let mut rod = BezPath::new();
+        rod.move_to(Point::new(d0 + scale * 0.06, deck - scale * 0.01));
+        rod.line_to(Point::new(perch + scale * 0.95, deck - scale * 0.30));
+        ink.stroke(&rod, IRON, (scale * 0.05).max(1.0));
+        ink.stroke(&rod, RIM.with_alpha(0.9), (scale * 0.02).max(0.5));
+    }
+}
+
+/// The garden: a fixture of the place, like the jetty — not a prop of the
+/// activity.
+///
+/// It used to be drawn only while he was gardening, which meant the row
+/// blinked out of existence for the length of every mid-morning cigarette
+/// and did not exist at all for the other twenty-two hours of his day. It
+/// was also planted inside his own unit box, so three of the four shoots
+/// stood behind his silhouette and the garden read as two green pixels.
+/// Now it is a row in stage space, ahead of where he kneels, there all day.
+fn draw_garden(ink: &mut impl Ink, w: f64, h: f64, band: f64) {
+    let (scale, stage_left, stage) = stage_layout(w, band);
+    let left = stage_left + place_position(Place::Garden) * stage;
+    let floor = ground(h, band);
+    ink.begin(Part::Props);
+    for row in 0..5 {
+        // Starting half a box out, so the row sits under his hands and runs
+        // ahead of him as he works along it facing right.
+        let x = left + scale * (0.50 + f64::from(row) * 0.22);
+        // Uneven heights, the way things grow.
+        let tall = scale * (0.16 + 0.04 * f64::from(row % 2));
+        let mut shoot = BezPath::new();
+        shoot.move_to(Point::new(x, floor));
+        shoot.quad_to(
+            Point::new(x - scale * 0.04, floor - tall * 0.6),
+            Point::new(x + scale * 0.05, floor - tall),
+        );
+        ink.stroke(&shoot, GREEN.with_alpha(0.9), (scale * 0.035).max(1.0));
+    }
 }
 
 /// The lumber he builds the hut from, where he fetches each plank.
@@ -1206,6 +1288,7 @@ fn draw_fire(
     ink: &mut impl Ink,
     block: &crate::routine::Block,
     progress: f64,
+    previous: Place,
     base: Point,
     scale: f64,
     frame: u64,
@@ -1217,6 +1300,11 @@ fn draw_fire(
         Doing::Cooking => {
             ease((progress / 0.12).min(1.0)) * (1.0 - 0.5 * ease(((progress - 0.8) / 0.2).max(0.0)))
         }
+        // The walk from the pit to the doorstep sits between those two, and
+        // a fire keyed only on Cooking/Eating went out for exactly its
+        // twelve seconds — a hearth blinking off while he stands up and on
+        // again while he sits down. Embers do not know he is walking.
+        Doing::Walking if block.place == Place::Doorstep && previous == Place::Fire => 0.5,
         Doing::Eating => 0.5 * (1.0 - ease((progress / 0.5).min(1.0))),
         _ => 0.0,
     };
@@ -1343,20 +1431,8 @@ fn draw_props(
                 );
             }
         }
-        Doing::Gardening => {
-            // A row of small shoots he is working along.
-            for row in 0..4 {
-                let x = 0.15 + f64::from(row) * 0.20;
-                let mut shoot = BezPath::new();
-                let base = at(Point::new(x, 0.95));
-                shoot.move_to(base);
-                shoot.quad_to(
-                    Point::new(base.x - scale * 0.02, base.y - scale * 0.06),
-                    Point::new(base.x + scale * 0.03, base.y - scale * 0.10),
-                );
-                ink.stroke(&shoot, GREEN.with_alpha(0.8), (scale * 0.02).max(0.5));
-            }
-        }
+        // Gardening draws no prop of its own: the row he works is a fixture
+        // of the place — see `draw_garden` — and lives there all day.
         _ => {}
     }
 }
@@ -1509,20 +1585,34 @@ impl HutGeometry {
 /// the two from ever disagreeing.
 ///
 /// It fades rather than switches, over about a minute of his day, because a
-/// lamp being carried into a room is not a light switch.
+/// lamp being lit in a dark room is not a light switch.
 pub fn window_light(doing: Doing, place: Place, progress: f64) -> f64 {
     let settled = |edge: f64| ease((progress / edge).min(1.0));
     match (doing, place) {
-        // Reading by the lamp is the brightest the hut gets.
-        (Doing::Reading, _) => settled(0.08),
-        // A nap is dim — he does not light the lamp to lie down.
-        (Doing::Siesta, _) => 0.22,
+        // A walking block's place is the walk's *destination*, so without
+        // this arm the window lit up the moment he turned for home — twelve
+        // seconds of a warm window over an empty house, which is exactly the
+        // lie the doc above promises never to tell. He walks home to a dark
+        // hut and lights the lamp once he is through the door.
+        (Doing::Walking, _) => 0.0,
+        // Reading by the lamp is the brightest the hut gets. The edge is
+        // sized against the ~2 h evening block so the fade is the promised
+        // minute or two, not the ten that 0.08 of it came to.
+        (Doing::Reading, _) => settled(0.015),
+        // Mid-cigarette at the table the lamp stays where reading had it —
+        // its own arm because the catch-all's 0.5 made the window flicker
+        // to half for three minutes every evening hour.
+        (Doing::Smoking, Place::Hut) => 1.0,
+        // A nap is dim — he does not light the lamp to lie down, he lets a
+        // little light in. Eased over the same minute as the rest.
+        (Doing::Siesta, _) => 0.22 * settled(0.01),
         // Going to bed: the lamp goes out over the first minutes.
         (Doing::Sleeping, _) => 0.45 * (1.0 - ease((progress / 0.04).min(1.0))),
-        // Waking: a lamp lit before dawn.
+        // Waking: a lamp lit before dawn. A switch, deliberately — striking
+        // a light in the dark is the one lighting change that *is* abrupt.
         (Doing::Waking, _) => 0.75,
         // Anything else indoors is somebody moving about.
-        (_, Place::Hut) => 0.5,
+        (_, Place::Hut) => 0.5 * settled(0.01),
         _ => 0.0,
     }
 }
@@ -1719,12 +1809,12 @@ fn draw_window(
         LAMP_DEEP.with_alpha(0.16 * lit as f32),
     );
     // Opaque glass first: the lamp over a bare wall let the planks show
-    // through the pane, which read as blinds.
+    // through the pane, which read as blinds. Any light at all is the deep
+    // amber; the bright lamp over it scales with how lit the room is. It used
+    // to start at 55%, so a nap's dim lamp (0.22) and reading's full one
+    // looked the same window.
     ink.fill(&shape_path(&pane), LAMP_DEEP);
-    ink.fill(
-        &shape_path(&pane),
-        LAMP.with_alpha((0.55 + 0.4 * lit) as f32),
-    );
+    ink.fill(&shape_path(&pane), LAMP.with_alpha((0.9 * lit) as f32));
 
     // Him, inside — a shape on the glass, occupying its lower half so he reads
     // as sitting at a table rather than floating.
@@ -1733,11 +1823,12 @@ fn draw_window(
     // the whole of that walk, so without the exclusion the window shows him
     // sitting at his table while he is visibly still crossing the rail. Nor
     // while he is getting up: a man at his table is not a man swinging his
-    // legs out of bed.
+    // legs out of bed. Nor during a nap: he is lying down, below the sill —
+    // sitting up at the table, he read as reading.
     if block.place == Place::Hut
         && !matches!(
             block.doing,
-            Doing::Sleeping | Doing::Walking | Doing::Waking
+            Doing::Sleeping | Doing::Siesta | Doing::Walking | Doing::Waking
         )
     {
         // A bust: shoulders, head, and the hat — the hat is how you know it is
@@ -2152,13 +2243,6 @@ mod tests {
         );
     }
 
-    /// Perpendicular distance from `p` to the line through `a` and `b`.
-    fn off_line(a: Point, b: Point, p: Point) -> f64 {
-        let ab = b - a;
-        let ap = p - a;
-        (ab.x * ap.y - ab.y * ap.x).abs() / ab.hypot().max(1e-9)
-    }
-
     /// **The stretch must clear the head.** The arm is drawn *before* the head,
     /// so a reach that goes straight up inside the head circle is overpainted
     /// and the stretch reads as a man simply standing there — which is exactly
@@ -2183,26 +2267,49 @@ mod tests {
         );
     }
 
-    /// **The shouldered rod rests on the shoulder.** A shaft that crosses the
-    /// head reads as a spear; one that floats a hand's width off the shoulder
-    /// reads as a diagram. And his hand has to be *on* it, or he is carrying
-    /// an invisible something else.
+    /// **The standing arm hangs; it does not grip.** The arm was drawn bent
+    /// up around a shouldered rod, and when the rod moved to the jetty an
+    /// unchanged arm would have been a fist clenched around nothing — the
+    /// exact failure that once justified carrying the rod everywhere,
+    /// including through the hut's window.
+    ///
+    /// Constant-valued on purpose, like the seated-pose tests: it guards a
+    /// relationship between hand-edited numbers.
     #[test]
-    fn the_shouldered_rod_rests_on_him_not_through_him() {
-        let shaft_off_shoulder = off_line(STANDING.rod_butt, STANDING.rod_tip, STANDING.shoulder);
+    #[allow(clippy::assertions_on_constants)]
+    fn the_standing_arm_hangs_rather_than_gripping_air() {
         assert!(
-            shaft_off_shoulder < 0.05,
-            "the shaft passes {shaft_off_shoulder:.3} off the shoulder — it floats"
+            STANDING.hand.y > STANDING.shoulder.y + 0.15,
+            "his hand is at {:.2} with the shoulder at {:.2} — the arm is \
+             still raised around a rod that is not there",
+            STANDING.hand.y,
+            STANDING.shoulder.y
         );
-        let head_bottom = STANDING.head.y + STANDING.head_radius;
         assert!(
-            STANDING.rod_tip.y < head_bottom && STANDING.rod_butt.y > head_bottom,
-            "the shaft should dip below his chin only ahead of him, never through the head"
+            (STANDING.hand.x - STANDING.shoulder.x).abs() < 0.12,
+            "the hand swings {:.2} wide of the shoulder at rest",
+            (STANDING.hand.x - STANDING.shoulder.x).abs()
         );
-        let shaft_off_hand = off_line(STANDING.rod_butt, STANDING.rod_tip, STANDING.hand);
+    }
+
+    /// **The arm counter-swings the stride.** Foot forward, hand back. A walk
+    /// that moves only the legs is a man carried on rails — the arm is half
+    /// of what a stride *is* at silhouette size.
+    ///
+    /// Constant-valued on purpose — see the seated-pose tests.
+    #[test]
+    #[allow(clippy::assertions_on_constants)]
+    fn the_arm_swings_against_the_stride() {
         assert!(
-            shaft_off_hand < 0.05,
-            "his hand is {shaft_off_hand:.3} off the shaft — he is gripping air"
+            STRIDE_FORWARD.foot.x > STRIDE_BACK.foot.x,
+            "the strides have stopped alternating"
+        );
+        assert!(
+            STRIDE_FORWARD.hand.x < STRIDE_BACK.hand.x,
+            "hand {:.2} with the foot at {:.2} — the arm swings with the leg, \
+             which is a march, not a walk",
+            STRIDE_FORWARD.hand.x,
+            STRIDE_FORWARD.foot.x
         );
     }
 

@@ -90,8 +90,10 @@ impl Ink for PixmapInk {
 
     fn stroke(&mut self, path: &BezPath, color: Color, width: f64) {
         if let Some(p) = to_ts(path) {
-            let mut stroke = tiny_skia::Stroke::default();
-            stroke.width = width.max(0.05) as f32;
+            let stroke = tiny_skia::Stroke {
+                width: width.max(0.05) as f32,
+                ..Default::default()
+            };
             self.pm.stroke_path(
                 &p,
                 &Self::paint(color),
@@ -284,13 +286,15 @@ fn walk_sheet() {
 // Sheet 3: the rail, via paint
 // ---------------------------------------------------------------------------
 
+/// One rail tile: (label, doing, place, previous, progress, completion, frame, seconds).
+type SceneTile = (&'static str, Doing, Place, Place, f64, f64, u64, f64);
+
 fn scene_sheet(band: f64, name: &str) {
     let tile_w = 1100.0;
     let tile_h = band * 3.0;
     let gap = 8.0;
 
-    // (label, doing, place, previous, progress, completion, frame, seconds)
-    let tiles: &[(&str, Doing, Place, Place, f64, f64, u64, f64)] = &[
+    let tiles: &[SceneTile] = &[
         (
             "build 20%",
             Doing::Walking,
