@@ -67,10 +67,13 @@ impl Doing {
         place == Place::Hut && self != Doing::Walking
     }
 
-    /// Whether he would step out for a cigarette during this.
+    /// Whether he would stop for a cigarette during this.
     ///
-    /// Not while asleep, not mid-walk, not while eating, and not while already
-    /// smoking — the rest is fair game.
+    /// He smokes where he is rather than stepping out for it: the cigarette
+    /// in [`at`] interrupts the activity and keeps its place, so indoors he
+    /// smokes at the table and outdoors wherever he was standing. Not while
+    /// asleep, not mid-walk, not while eating, and not while already smoking —
+    /// the rest is fair game.
     pub fn takes_a_break(self) -> bool {
         matches!(
             self,
@@ -137,6 +140,64 @@ pub fn bed_at(sunset: f64) -> f64 {
     (sunset + 2.0).min(23.5)
 }
 
+/// The earliest sunrise the day is scheduled against. He gets up half an hour
+/// before it, so a sunrise before 00:30 has him up before midnight and the tail
+/// of last night ending before it starts. At 01:00 that tail keeps half an hour.
+const FIRST_LIGHT: f64 = 1.0;
+/// The latest sunset. Bed is capped at 23:30 and the book comes out ten minutes
+/// after sunset, so a sunset past 23:20 has him start reading after he has gone
+/// to bed — a block that ends before it begins, laid over the night. At 23:00
+/// reading keeps twenty minutes.
+const LAST_LIGHT: f64 = 23.0;
+/// The shortest day. Lunch goes on the fire three-quarters of an hour before
+/// noon and the morning's fishing starts two and a quarter hours after sunrise,
+/// so they meet when the day is six hours long; the afternoon's fishing, from
+/// two hours after noon to an hour before sunset, closes at the same length.
+/// Tromsø in November has about four, and below six the morning runs backwards
+/// — lunch cooked before he has gone out to fish. Six and a half leaves each
+/// stretch at the water a real quarter of an hour rather than a sliver.
+const SHORTEST_DAY: f64 = 6.5;
+
+/// The sun the day is actually scheduled against.
+///
+/// The script in [`day_plan`] is shaped for a temperate sun, and the editor's
+/// polar fallback only catches days when the sun fails to rise or to set at
+/// all. Between the two is the far north in spring and autumn, where the sun
+/// does both at hours the script was never shaped for, and each edge breaks
+/// the day in its own way — see [`FIRST_LIGHT`], [`LAST_LIGHT`] and
+/// [`SHORTEST_DAY`]. Such a day keeps its middle where it can, so lunch stays
+/// at the real noon, is stretched to the shortest day that fits, and is then
+/// pushed in from whichever edge it still crosses.
+///
+/// Nothing finite, or a sunset at or before sunrise — which is what a sunset
+/// past midnight looks like once it is wrapped into local hours — gets the
+/// civil 07:00 to 19:00 the editor already uses for polar day and night.
+fn tame_sun(sunrise: f64, sunset: f64) -> (f64, f64) {
+    if !(sunrise.is_finite() && sunset.is_finite()) || sunset <= sunrise {
+        return (7.0, 19.0);
+    }
+
+    // A sun that already fits is handed back untouched rather than rebuilt
+    // from its middle and half-length: that round trip is not exact, and
+    // brought San Francisco's summer sunrise back as 5.800000000000001 — every
+    // ordinary day a rounding error away from the sun it was given.
+    if sunrise >= FIRST_LIGHT && sunset <= LAST_LIGHT && sunset - sunrise >= SHORTEST_DAY {
+        return (sunrise, sunset);
+    }
+
+    // The middle is held far enough from both edges that the shortest day
+    // fits around it, so the clamp below can only ever shorten a long day and
+    // never squeeze a short one back under six and a half hours.
+    let half_shortest = SHORTEST_DAY / 2.0;
+    let middle =
+        ((sunrise + sunset) / 2.0).clamp(FIRST_LIGHT + half_shortest, LAST_LIGHT - half_shortest);
+    let half = (sunset - sunrise).clamp(SHORTEST_DAY, LAST_LIGHT - FIRST_LIGHT) / 2.0;
+    (
+        (middle - half).clamp(FIRST_LIGHT, LAST_LIGHT),
+        (middle + half).clamp(FIRST_LIGHT, LAST_LIGHT),
+    )
+}
+
 /// How far through overnight sleep, treating the midnight split as one night.
 ///
 /// Sleep is two blocks in [`day_plan`] (`[bed, 24)` and `[0, up)`) so every
@@ -145,6 +206,10 @@ pub fn bed_at(sunset: f64) -> f64 {
 /// mid-sleep — measured 0.000 @ 23:45, 0.450 @ 00:00, 0.000 @ 00:15. One
 /// continuous night for anything that reads sleep progress.
 pub fn sleep_progress(hours: f64, sunrise: f64, sunset: f64) -> f64 {
+    // Tamed exactly as `day_plan` tames it. `at` hands both the raw sun, and a
+    // night measured against a different sun than the one that put him to bed
+    // would start or end somewhere he is not asleep.
+    let (sunrise, sunset) = tame_sun(sunrise, sunset);
     let up = wake_at(sunrise);
     let bed = bed_at(sunset);
     let total = (24.0 - bed) + up;
@@ -170,7 +235,14 @@ pub fn sleep_progress(hours: f64, sunrise: f64, sunset: f64) -> f64 {
 /// Sleep is split around midnight rather than wrapping, so every block lies in
 /// `0.0..24.0` and "the day is contiguous" is a property that can simply be
 /// checked. Progress across that split is rejoined in [`sleep_progress`].
+///
+/// A sun at hours the script was never shaped for — the far north short of
+/// midnight sun or polar night — is first brought inside them by `tame_sun`.
 pub fn day_plan(sunrise: f64, sunset: f64) -> Vec<Block> {
+    // Both public entry points tame the sun themselves rather than trusting the
+    // caller to — `at` passes the raw values to this and to `sleep_progress`
+    // alike, and the two have to agree on when he went to bed.
+    let (sunrise, sunset) = tame_sun(sunrise, sunset);
     let hour = 1.0;
     let minutes = |m: f64| m / 60.0;
 
@@ -333,31 +405,95 @@ mod tests {
     #[test]
     fn the_day_is_covered_end_to_end_with_no_gaps_and_no_overlaps() {
         for (sunrise, sunset) in [SUMMER, WINTER, (4.5, 22.0), (8.0, 16.0)] {
-            let plan = day_plan(sunrise, sunset);
-            assert_eq!(
-                plan.first().unwrap().start,
-                0.0,
-                "the day starts at midnight"
-            );
-            assert_eq!(plan.last().unwrap().end, 24.0, "and runs to the next one");
+            assert_the_day_is_whole(sunrise, sunset);
+        }
+    }
 
-            for pair in plan.windows(2) {
-                assert!(
-                    (pair[0].end - pair[1].start).abs() < 1e-9,
-                    "sunrise {sunrise}: {:?} ends at {:.4} but {:?} starts at {:.4}",
-                    pair[0].doing,
-                    pair[0].end,
-                    pair[1].doing,
-                    pair[1].start
-                );
+    /// Midnight to midnight, every block abutting the next, none of them empty
+    /// or running backwards.
+    fn assert_the_day_is_whole(sunrise: f64, sunset: f64) {
+        let plan = day_plan(sunrise, sunset);
+        assert_eq!(
+            plan.first().unwrap().start,
+            0.0,
+            "sun {sunrise}–{sunset}: the day starts at midnight"
+        );
+        assert_eq!(
+            plan.last().unwrap().end,
+            24.0,
+            "sun {sunrise}–{sunset}: and runs to the next one"
+        );
+
+        for pair in plan.windows(2) {
+            assert!(
+                (pair[0].end - pair[1].start).abs() < 1e-9,
+                "sun {sunrise}–{sunset}: {:?} ends at {:.4} but {:?} starts at {:.4}",
+                pair[0].doing,
+                pair[0].end,
+                pair[1].doing,
+                pair[1].start
+            );
+        }
+        for block in &plan {
+            assert!(
+                block.end > block.start,
+                "sun {sunrise}–{sunset}: {:?} at {:.4} has no duration",
+                block.doing,
+                block.start
+            );
+        }
+    }
+
+    /// The far north in spring and autumn: the sun still rises and sets, so
+    /// the editor's polar fallback never sees it, but at hours the script was
+    /// not shaped for. A sunset past 23:20 had him start reading after he went
+    /// to bed, a sunrise before 00:30 got him up before midnight, and a
+    /// four-hour November day in Tromsø had lunch on the fire before he had
+    /// gone out to fish. Every one of those is a hole or an overlap in the day.
+    #[test]
+    fn the_day_survives_a_sun_at_the_edge_of_the_arctic() {
+        for sunrise in [-2.0, 0.2, 1.0, 5.0, 10.0] {
+            for sunset in [11.0, 16.0, 22.0, 23.4, 24.5, 26.0] {
+                assert_the_day_is_whole(sunrise, sunset);
             }
-            for block in &plan {
-                assert!(
-                    block.end > block.start,
-                    "sunrise {sunrise}: {:?} has no duration",
-                    block.doing
-                );
-            }
+        }
+        // And whatever no sun can mean — nothing at all, a sunset before
+        // sunrise, a day with no length — falls back to civil hours rather
+        // than to no day.
+        for (sunrise, sunset) in [
+            (f64::NAN, 19.0),
+            (7.0, f64::INFINITY),
+            (f64::NEG_INFINITY, f64::NAN),
+            (18.0, 6.0),
+            (12.0, 12.0),
+        ] {
+            assert_the_day_is_whole(sunrise, sunset);
+            assert_eq!(
+                day_plan(sunrise, sunset),
+                day_plan(7.0, 19.0),
+                "sun {sunrise}–{sunset} should get the civil day"
+            );
+        }
+    }
+
+    /// Taming the sun is for the edges only. An ordinary day has to be
+    /// scheduled against exactly the sun it was given — rebuilding it from its
+    /// middle and half-length brought San Francisco's summer sunrise back as
+    /// 5.800000000000001, close enough to look right and not the same day.
+    #[test]
+    fn an_ordinary_sun_is_left_exactly_as_it_was() {
+        for (sunrise, sunset) in [SUMMER, WINTER, (4.5, 22.0), (8.0, 16.0)] {
+            assert_eq!(tame_sun(sunrise, sunset), (sunrise, sunset));
+            let waking = day_plan(sunrise, sunset)
+                .iter()
+                .find(|b| b.doing == Doing::Waking)
+                .map(|b| b.start)
+                .expect("he gets up");
+            assert_eq!(
+                waking,
+                wake_at(sunrise),
+                "sun {sunrise}–{sunset}: he got up to a different sun than he was given"
+            );
         }
     }
 
@@ -429,6 +565,46 @@ mod tests {
             a < 0.01 && b < 0.01 && c < 0.01,
             "lamp across midnight: 23:45={a:.3} 00:00={b:.3} 00:15={c:.3}"
         );
+    }
+
+    /// A sun up at 00:12 and down at 23:48 still rises and sets, so it reaches
+    /// the routine as it is. Taken raw, the night was a twelve-minute sliver
+    /// that read as already over on both sides of midnight, while the plan had
+    /// him up and exercising at 00:00. Tamed, it is a short night but one
+    /// night: asleep across the seam, and moving through it at an even pace.
+    #[test]
+    fn a_short_northern_night_is_still_one_night() {
+        let (sunrise, sunset) = (0.2, 23.8);
+        let minute = 1.0 / 60.0;
+        let before = sleep_progress(24.0 - minute, sunrise, sunset);
+        let on_the_hour = sleep_progress(0.0, sunrise, sunset);
+        let after = sleep_progress(minute, sunrise, sunset);
+
+        for progress in [before, on_the_hour, after] {
+            assert!(
+                (0.0..=1.0).contains(&progress),
+                "sleep progress {progress} is not a fraction of a night"
+            );
+        }
+        assert!(
+            before < on_the_hour && on_the_hour < after,
+            "the night stalled across midnight: \
+             23:59={before:.3} 00:00={on_the_hour:.3} 00:01={after:.3}"
+        );
+        // The minute that crosses midnight is worth the same as the minute
+        // after it — no jump at the seam.
+        assert!(
+            ((on_the_hour - before) - (after - on_the_hour)).abs() < 1e-9,
+            "midnight jumped sleep progress {before:.3} → {on_the_hour:.3} → {after:.3}"
+        );
+
+        for hours in [24.0 - minute, 0.0, minute] {
+            assert_eq!(
+                at(hours, sunrise, sunset, 0).0.doing,
+                Doing::Sleeping,
+                "awake at {hours:.3} in a night that should hold him"
+            );
+        }
     }
 
     /// The whole point of anchoring to the sun. A winter day has to be a
