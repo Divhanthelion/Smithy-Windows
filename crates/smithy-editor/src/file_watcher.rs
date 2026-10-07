@@ -12,11 +12,19 @@
 //! in that order. Taking the last kind — which is what a debouncer keyed by path
 //! naturally does — therefore reports a deleted file as modified.
 //!
-//! So the kind is used for exactly one thing (recognising a rename pair) and the
-//! classification comes from the filesystem instead: after the debounce window
-//! closes, is the path there? Every backend agrees about that. It also removes
-//! the need to special-case atomic saves, which are the reason a delete is so
-//! often not a delete — see the note where `AtomicSaveDetector` used to be.
+//! So the kind is not consulted at all; the classification comes from the
+//! filesystem instead: after the debounce window closes, is the path there?
+//! Every backend agrees about that. It also removes the need to special-case
+//! atomic saves, which are the reason a delete is so often not a delete — see
+//! the note where `AtomicSaveDetector` used to be.
+//!
+//! The kind used to be kept for one job, recognising a rename pair — and that
+//! one job was a bug. On Linux, inotify pairs the two halves of a rename into
+//! a single `RenameMode::Both` event, and "handle renames specially" skipped
+//! it, so the write-temp-rename-over save of every editor produced no event
+//! at all: the file changed on disk and Smithy never heard. Windows and macOS
+//! never hit it because their backends report renames as separate events,
+//! which is why the first Linux CI run was the thing that caught it.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -25,8 +33,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use notify::event::{ModifyKind, RenameMode};
-use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 /// Directories that should never be watched regardless of gitignore settings
 const EXCLUDED_DIRS: &[&str] = &[
@@ -95,8 +102,10 @@ struct AdaptiveDebouncer {
     in_burst_mode: bool,
 }
 
+/// When a path was last mentioned. The backend's event kind is deliberately
+/// not kept: nothing downstream may trust it (see the module docs), and the
+/// last place that did — a rename special case — was a Linux-only hole.
 struct PendingEvent {
-    kind: EventKind,
     last_seen: Instant,
 }
 
@@ -121,17 +130,13 @@ impl AdaptiveDebouncer {
             self.pending
                 .entry(path.clone())
                 .and_modify(|p| {
-                    p.kind = event.kind;
                     p.last_seen = now;
                 })
-                .or_insert(PendingEvent {
-                    kind: event.kind,
-                    last_seen: now,
-                });
+                .or_insert(PendingEvent { last_seen: now });
         }
     }
 
-    fn drain_ready(&mut self) -> Vec<(PathBuf, EventKind)> {
+    fn drain_ready(&mut self) -> Vec<PathBuf> {
         let now = Instant::now();
         let delay = if self.in_burst_mode {
             Duration::from_millis(self.config.burst_delay_ms)
@@ -142,7 +147,7 @@ impl AdaptiveDebouncer {
         let mut ready = Vec::new();
         self.pending.retain(|path, pending| {
             if now.duration_since(pending.last_seen) >= delay {
-                ready.push((path.clone(), pending.kind));
+                ready.push(path.clone());
                 false
             } else {
                 true
@@ -385,7 +390,7 @@ impl FileWatcher {
 
         // Process debounced events. `drain_ready` hands back an owned list, so
         // the debouncer is not borrowed for the body of this loop.
-        for (path, kind) in self.debouncer.drain_ready() {
+        for path in self.debouncer.drain_ready() {
             // Handle git status changes
             if Self::is_git_path(&path) {
                 if path.ends_with("index")
@@ -397,16 +402,16 @@ impl FileWatcher {
                 continue;
             }
 
-            // Handle renames specially
-            if let EventKind::Modify(ModifyKind::Name(RenameMode::Both)) = &kind {
-                // For rename events, path contains the "to" path
-                // The "from" path would be in a paired event
-                // notify-debouncer-full handles this correlation
-                continue;
-            }
-
-            // What happened is decided by **looking at the filesystem**, not by
-            // trusting the backend's event kind. See `classify`.
+            // Renames classify like everything else: the vanished temp file
+            // as a delete, the renamed-over target as a modification. A
+            // special case used to skip rename-kinded paths on the theory
+            // that a paired event carried the correlation — a note left over
+            // from a notify-debouncer-full design this code never had. On
+            // Linux, where inotify pairs an atomic save into one Both event,
+            // that skip swallowed every save; see the module docs.
+            //
+            // What happened is decided by **looking at the filesystem**, not
+            // by trusting the backend's event kind.
             let exists = path.exists();
             let known = if exists {
                 !self.known_paths.insert(path.clone())
@@ -608,6 +613,10 @@ pub fn spawn_file_watcher(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The library deliberately no longer reads event kinds; the tests still
+    // construct them, because `notify::Event` has one.
+    use notify::event::ModifyKind;
+    use notify::EventKind;
 
     #[test]
     fn build_output_directories_are_never_watched() {
@@ -668,7 +677,7 @@ mod tests {
         // Now should be ready
         let ready = debouncer.drain_ready();
         assert_eq!(ready.len(), 1);
-        assert_eq!(ready[0].0, PathBuf::from("/test/file.txt"));
+        assert_eq!(ready[0], PathBuf::from("/test/file.txt"));
     }
 
     // === Race condition tests ===
@@ -823,6 +832,6 @@ mod tests {
         // Should only report one event (coalesced)
         let ready = debouncer.drain_ready();
         assert_eq!(ready.len(), 1);
-        assert_eq!(ready[0].0, path);
+        assert_eq!(ready[0], path);
     }
 }
